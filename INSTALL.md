@@ -1,10 +1,10 @@
 # Install Revenue Partner Studio by Your AI Guy
 
-This is the **browser-first** installation path for v0.2.0-beta.1. The coding assistant performs the commands and configuration. The owner completes account sign-in and approves concrete costs. Read [Before You Start](docs/BEFORE-YOU-START.md) first and use the [complete setup prompt](docs/SETUP-PROMPT.txt).
+This is the **browser-first** installation path for v0.2.0-beta.2. The coding assistant performs the commands and configuration. The owner completes account sign-in and approves concrete costs. Read [Before You Start](docs/BEFORE-YOU-START.md) first and use the [complete setup prompt](docs/SETUP-PROMPT.txt).
 
 ## 1. Prepare an independent release copy
 
-Use a new folder, not another product’s checkout or a linked worktree. Clone the public repository, check out `v0.2.0-beta.1`, and read AGENTS.md. Verify the release SHA-256 checksums if using packaged downloads. Install Git, Node 22.22+ (24 recommended) and npm with the owner’s existing package manager. Install the Railway CLI if absent. Use an existing authenticated Railway account or initiate its supported login flow.
+Use a new folder, not another product’s checkout or a linked worktree. Clone the public repository, check out `v0.2.0-beta.2`, and read AGENTS.md. Verify the release SHA-256 checksums if using packaged downloads. Install Git, Node 22.22+ (24 recommended) and npm with the owner’s existing package manager. Install the Railway CLI if absent. Use an existing authenticated Railway account or initiate its supported login flow.
 
 ```sh
 node distribution/setup.mjs preflight
