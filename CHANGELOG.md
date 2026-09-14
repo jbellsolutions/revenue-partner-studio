@@ -5,6 +5,7 @@
 - Simple Hermes settings and Advanced reasoning, tool restrictions and turn limits, with changed-field saves, conflict detection and between-turn activation.
 - Recent local and cross-computer handoffs with recipient links, acknowledgment, results and permission/error status.
 - Guarded extension updates with verified backups, readiness checks and source rollback. Mac service scheduling supports interactive requests; native Hermes and credentials remain intact.
+- In-place specialist screen ownership repair and verified legacy Orgo update paths. Mac repair downloads remain available while the existing connector is online.
 - These changes do not establish live GTM screen acceptance or the new 24-hour qualification. See docs/RELEASE-CHECKS.md.
 
 ## Revenue Partner Studio v0.2.0-beta.2

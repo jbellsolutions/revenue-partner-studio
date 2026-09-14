@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 config=json.loads(Path(sys.argv[1]).read_text())
-if len(sys.argv) > 2 and sys.argv[2] not in {'status','capacity','hold','drop','cancel'}:
+if len(sys.argv) > 2 and sys.argv[2] not in {'status','repair','capacity','hold','drop','cancel'}:
     source=Path('/tmp/.vncpasswd').read_bytes()[:8]
     if len(source)!=8:raise RuntimeError('Computer desktop credential unavailable')
     lib=ctypes.CDLL(ctypes.util.find_library('crypto') or 'libcrypto.so.3')

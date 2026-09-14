@@ -30,7 +30,7 @@ type Pending = {
 type Viewer = { id: string; socket: WebSocket; computer: string; cursor: number; replaying: boolean; buffer: any[] }
 type Client = WebSocket & { alive?: boolean; sessionToken?: string }
 const METHODS = new Set([
-  'connection.status', 'screen.status', 'screen.capacity', 'profile.settings.get', 'profile.settings.update',
+  'connection.status', 'screen.status', 'screen.repair', 'screen.capacity', 'profile.settings.get', 'profile.settings.update',
   'models.options', 'models.select', 'models.status', 'skills.update', 'endpoints.configure', 'endpoints.list',
   'explorer.roots','explorer.add','explorer.list','explorer.read','explorer.folders','explorer.choose','library.profiles',
   'status',
@@ -230,7 +230,8 @@ export function createGateway(options: Options) {
         if(url.pathname==='/api/connections/install'&&req.method==='POST')return json(res,202,await computers.connect(String((await body(req)).computerId||'')))
         if(url.pathname==='/api/connections/local'&&req.method==='POST') {
           const b=await body(req)
-          if(b.computerId&&connectors.has(b.computerId))throw Error('This Mac is already connected.')
+          // Preparing a repair leaves the live connector and its credential intact.
+          // The Mac updater checks accepted work before replacing owned components.
           const result=localSetup(control,origin,options.setupDir||path.resolve('dist/setup'),b)
           publishDirectory();return json(res,201,result)
         }

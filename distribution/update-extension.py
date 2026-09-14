@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import plistlib
+import shlex
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -29,6 +30,39 @@ def launch_updates(configuration, target):
         value['ProcessType'] = 'Interactive'
         changes[path] = (original, plistlib.dumps(value))
     return changes
+
+
+def orgo_installation(configuration, cfg, proc_root=Path('/proc')):
+    """Resolve legacy paths only from the exact supervised Studio processes."""
+    processes = {}
+    for name in ('runtime', 'connector'):
+        pid = subprocess.check_output(['supervisorctl', 'pid', 'unified-studio-'+name], text=True).strip()
+        if not pid.isdigit() or int(pid) <= 0: raise RuntimeError('The existing Studio '+name+' owner could not be verified')
+        process = proc_root/pid
+        args = process.joinpath('cmdline').read_bytes().decode().rstrip('\0').split('\0')
+        processes[name] = (args, process.joinpath('cwd').resolve())
+    args, target = processes['connector']
+    if len(args) != 5 or args[1:4] != ['-m','studio.cloud_connector','--config'] or Path(args[4]).resolve() != configuration:
+        raise RuntimeError('The supervised connector does not belong to this Studio configuration')
+    runtime, runtime_target = processes['runtime']
+    if runtime_target != target or runtime[0] != args[0] or 'serve' not in runtime or '--isolated' not in runtime:
+        raise RuntimeError('The supervised runtime does not match this Studio installation')
+    if cfg.get('sourceDir') and Path(cfg['sourceDir']).resolve() != target:
+        raise RuntimeError('The saved Studio source does not match its running owner')
+    if cfg.get('python') and Path(cfg['python']).resolve() != Path(args[0]).resolve():
+        raise RuntimeError('The saved Studio Python does not match its running owner')
+    resolved = {**cfg, 'sourceDir':str(target), 'python':args[0]}
+    changes = {}
+    if cfg.get('screenControl'):
+        wrapper = Path(cfg['screenControl'])
+        if wrapper != configuration.parent/'screen-control' or wrapper.resolve() != wrapper:
+            raise RuntimeError('The screen controller does not belong to this Studio installation')
+        old = wrapper.read_bytes()
+        if str(target).encode() not in old or not any(marker in old for marker in (b'hermes_cli.orgo_screens',b'distribution/screen-control.py')):
+            raise RuntimeError('The existing screen controller owner could not be verified')
+        command = ' '.join(shlex.quote(x) for x in [args[0],str(target/'distribution/screen-control.py'),str(configuration)])
+        changes[wrapper] = (old, ('#!/bin/sh\nexec '+command+' "$@"\n').encode())
+    return resolved, changes
 
 
 def verify_runtime(cfg):
@@ -85,13 +119,15 @@ def update(configuration, source, apply=False, setup_job=None):
     cfg = json.loads(original_config)
     if setup_job is not None and (not isinstance(setup_job,str) or not 1 <= len(setup_job) <= 200):
         raise ValueError('Invalid repair job identity')
-    home, target = Path(cfg['hermesHome']).resolve(), Path(cfg['sourceDir']).resolve()
     kind = cfg.get('kind', 'orgo')
+    owned_files = {}
+    if kind != 'local': cfg, owned_files = orgo_installation(configuration, cfg)
+    home, target = Path(cfg['hermesHome']).resolve(), Path(cfg['sourceDir']).resolve()
     binding = home / ('studio-cloud/local-computer.json' if kind == 'local' else 'orgo-computer/computer.json')
     if json.loads(binding.read_text()).get('computerId') != cfg['computerId']:
         raise RuntimeError('Computer identity mismatch')
     files = payload(source.resolve(), target, kind)
-    launch_files = launch_updates(configuration, target) if kind == 'local' else {}
+    owned_files.update(launch_updates(configuration, target) if kind == 'local' else {})
     task_store = home/('studio/workspace.sqlite3' if kind == 'local' else 'studio-cloud/runtime/workspace.sqlite3')
     queued = pending(task_store)
     result = {'computerId': cfg['computerId'], 'files': len(files), 'pendingTasks': queued,
@@ -110,7 +146,8 @@ def update(configuration, source, apply=False, setup_job=None):
     for name, data in old.items():
         if data is not None:
             p = backup/'source'/name;p.parent.mkdir(parents=True, exist_ok=True);p.write_bytes(data)
-    for path, (original, _) in launch_files.items():
+    modes = {path:path.stat().st_mode & 0o777 for path in owned_files}
+    for path, (original, _) in owned_files.items():
         (backup/path.name).write_bytes(original)
     def control(action, name):
         if kind == 'local':
@@ -140,11 +177,12 @@ def update(configuration, source, apply=False, setup_job=None):
             replaced = True
             dest = target/name;dest.parent.mkdir(parents=True, exist_ok=True)
             temp = dest.with_suffix('.studio-update');temp.write_bytes(data);temp.replace(dest)
-        for path, (_, data) in launch_files.items():
-            temp = path.with_suffix('.studio-update');temp.write_bytes(data);temp.replace(path)
-        if setup_job is not None:
+        for path, (_, data) in owned_files.items():
+            temp = path.with_suffix('.studio-update');temp.write_bytes(data);temp.chmod(modes[path]);temp.replace(path)
+        updated_cfg = {**cfg, **({'setupJob':setup_job} if setup_job is not None else {})}
+        if updated_cfg != json.loads(original_config):
             temp=configuration.with_suffix('.studio-update')
-            temp.write_text(json.dumps({**cfg,'setupJob':setup_job}));temp.replace(configuration)
+            temp.write_text(json.dumps(updated_cfg));temp.replace(configuration)
         record = {'revision': result['revision'], 'computerId': cfg['computerId'],
                   'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
         (backup/'manifest.json').write_text(json.dumps(record))
@@ -161,7 +199,7 @@ def update(configuration, source, apply=False, setup_job=None):
                 dest = target/name
                 if data is None: dest.unlink(missing_ok=True)
                 else: dest.write_bytes(data)
-            for path, (original, _) in launch_files.items(): path.write_bytes(original)
+            for path, (original, _) in owned_files.items(): path.write_bytes(original);path.chmod(modes[path])
             configuration.write_bytes(original_config)
         raise
     finally:

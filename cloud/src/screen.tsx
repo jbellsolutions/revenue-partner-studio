@@ -28,6 +28,9 @@ export const Screen = memo(function Screen({
     [stopped, setStopped] = useState(false)
   const failures = useRef(0)
   const [screenInfo, setScreenInfo] = useState<any>(null)
+  const [repairing, setRepairing] = useState(false)
+  const selection = useRef('')
+  selection.current = computer + '/' + agent
   useEffect(() => {
     let disposed = false
     let reconnect: ReturnType<typeof setTimeout> | undefined
@@ -118,6 +121,19 @@ export const Screen = memo(function Screen({
       setControlling(false)
     }
   }
+  async function repair() {
+    const selected = selection.current
+    setRepairing(true)
+    try {
+      await rpc(computer, 'screen.repair', { agentId: agent })
+      if (selected !== selection.current) return
+      failures.current = 0; setError(''); setAttempt(v => v + 1)
+    } catch (e) {
+      if (selected === selection.current) setError((e as Error).message)
+    } finally {
+      if (selected === selection.current) setRepairing(false)
+    }
+  }
   return (
     <section ref={frame} className="studio-screen-section">
       <div className="studio-screen-heading">
@@ -157,6 +173,8 @@ export const Screen = memo(function Screen({
                 Reconnect screen
               </button>
             )}
+            {status === 'Repair needed' && screenInfo?.reason === 'unverified_owner' &&
+              <button disabled={repairing} onClick={() => void repair()}>{repairing ? 'Checking ownership…' : 'Repair screen ownership'}</button>}
             {status === 'Repair needed' && onRepair && <button onClick={onRepair}>Repair computer connection</button>}
             {status === 'Waiting for capacity' && !stopped && (
               <button

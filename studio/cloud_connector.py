@@ -23,7 +23,7 @@ from websockets.asyncio.client import connect
 from .cloud_ledger import Ledger
 
 PROFILE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
-WRITES = {'chat.send', 'chat.cancel', 'agents.create', 'import.apply', 'settings.update', 'profile.settings.update', 'screen.capacity',
+WRITES = {'chat.send', 'chat.cancel', 'agents.create', 'import.apply', 'settings.update', 'profile.settings.update', 'screen.capacity', 'screen.repair',
           'import.commit', 'tasks.cancel', 'tasks.resume', 'a2a.receive', 'providers.begin', 'providers.submit', 'peer.send', 'peer.receive', 'approvals.resolve',
           'agents.update', 'providers.configure', 'skills.update', 'models.select', 'endpoints.configure'}
 
@@ -520,6 +520,8 @@ class Connector:
             self.ledger.session(p['runtimeId'], agent)
             return await self.rpc('approval.respond', {'session_id': p['runtimeId'], 'request_id': p['approvalId'], 'choice': p['choice']})
         if method.startswith('screen.'):
+            if method == 'screen.repair':
+                return await self.screen(agent, 'repair')
             if method == 'screen.capacity':
                 return await self.screen(agent, 'capacity', str(int(p['specialists'])))
             if method == 'screen.status':
@@ -672,7 +674,7 @@ class Connector:
         info = json.loads(out)
         if info.get('computerId') != self.computer or info.get('profile') != agent:
             raise ValueError('Screen identity mismatch')
-        if info.get('queued') or operation in {'hold', 'drop', 'cancel', 'status', 'capacity'}: return info
+        if info.get('queued') or operation in {'hold', 'drop', 'cancel', 'status', 'capacity', 'repair'}: return info
         port = int(info['wsPort'])
         if port not in range(6199, 6216) or info.get('display') != ':' + str(port - 6100) or (agent == 'default') != (port == 6199):
             raise ValueError('Unexpected screen transport')

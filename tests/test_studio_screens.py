@@ -106,3 +106,50 @@ def test_unverified_screen_process_is_reported_without_taking_ownership(registry
     result = screens.inspect('brent')
     assert result['state'] == 'repair_needed' and result['reason'] == 'unverified_owner'
     assert not (registry/'brent/display.process.json').exists()
+
+
+def test_ownership_repair_preserves_live_services_browser_data_and_human_control(registry,monkeypatch):
+    info=screens.screen('brent');directory=Path(info['directory'])
+    screens.control('brent',True)
+    browser=directory/'browser';browser.mkdir();(browser/'profile-proof').write_text('saved browser')
+    leases=(directory/'leases.json').read_bytes();assignment=(registry/'screens.json').read_bytes()
+    monkeypatch.setattr(screens,'port_owners',lambda port:{port})
+    monkeypatch.setattr(screens,'listening',lambda port:True)
+    monkeypatch.setattr(screens,'window_managers',lambda info:[])
+    monkeypatch.setattr(screens,'managed_identity',lambda info,service,pid:{'pid':pid,'start':'verified'})
+    monkeypatch.setattr(screens.os,'killpg',lambda *a:pytest.fail('repair must never stop live services'))
+    result=screens.reconcile('brent')
+    assert result['reconciled']==['chrome','display','viewer']
+    assert (directory/'paused').exists() and (directory/'leases.json').read_bytes()==leases
+    assert (registry/'screens.json').read_bytes()==assignment and (browser/'profile-proof').read_text()=='saved browser'
+    assert json.loads((directory/'chrome.process.json').read_text())=={'pid':info['cdpPort'],'start':'verified'}
+
+
+def test_ownership_repair_is_all_or_nothing_for_unknown_or_multiple_owners(registry,monkeypatch):
+    info=screens.screen('brent');directory=Path(info['directory'])
+    monkeypatch.setattr(screens,'port_owners',lambda port:{1,2} if port==info['cdpPort'] else {1})
+    monkeypatch.setattr(screens,'listening',lambda port:True)
+    monkeypatch.setattr(screens,'managed_identity',lambda *a:{'pid':1,'start':'verified'})
+    with pytest.raises(RuntimeError,match='multiple owners'):screens.reconcile('brent')
+    assert not list(directory.glob('*.process.json'))
+    monkeypatch.setattr(screens,'port_owners',lambda port:{1})
+    def unknown(*a):raise RuntimeError('unverified owner')
+    monkeypatch.setattr(screens,'managed_identity',unknown)
+    with pytest.raises(RuntimeError,match='unverified owner'):screens.reconcile('brent')
+    assert not list(directory.glob('*.process.json'))
+
+
+def test_repair_requires_browser_directory_display_port_and_own_process_group(registry,monkeypatch):
+    info=screens.screen('brent');proc=registry/'proc';p=proc/'42';p.mkdir(parents=True)
+    args=['/usr/bin/google-chrome','--remote-debugging-address=127.0.0.1',f"--remote-debugging-port={info['cdpPort']}",'--user-data-dir='+str(Path(info['directory'])/'browser')]
+    (p/'cmdline').write_bytes(('\0'.join(args)+'\0').encode());(p/'environ').write_bytes(('DISPLAY='+info['display']+'\0').encode())
+    monkeypatch.setattr(screens,'process_start',lambda pid:'verified')
+    monkeypatch.setattr(screens.os,'getpgid',lambda pid:pid)
+    assert screens.managed_identity(info,'chrome',42,proc)=={'pid':42,'start':'verified'}
+    (p/'environ').write_bytes(b'DISPLAY=:99\0')
+    with pytest.raises(RuntimeError,match='another display'):screens.managed_identity(info,'chrome',42,proc)
+    (p/'environ').write_bytes(('DISPLAY='+info['display']+'\0').encode())
+    args[-1]='--user-data-dir=/another/agent/browser';(p/'cmdline').write_bytes(('\0'.join(args)+'\0').encode())
+    with pytest.raises(RuntimeError,match='unverified owner'):screens.managed_identity(info,'chrome',42,proc)
+    monkeypatch.setattr(screens.os,'getpgid',lambda pid:1)
+    with pytest.raises(RuntimeError,match='ownership'):screens.managed_identity(info,'chrome',42,proc)

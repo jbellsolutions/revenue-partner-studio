@@ -264,6 +264,94 @@ def process_start(pid: int) -> str | None:
         return None
 
 
+def port_owners(port: int) -> set[int]:
+    inodes = set()
+    for table in (Path('/proc/net/tcp'), Path('/proc/net/tcp6')):
+        if not table.exists(): continue
+        for row in table.read_text().splitlines()[1:]:
+            fields = row.split()
+            if fields[3] == '0A' and int(fields[1].rsplit(':',1)[1],16) == port:
+                inodes.add('socket:['+fields[9]+']')
+    owners = set()
+    if not inodes: return owners
+    for process in Path('/proc').iterdir():
+        if not process.name.isdigit(): continue
+        try:
+            if any(os.readlink(fd) in inodes for fd in (process/'fd').iterdir()): owners.add(int(process.name))
+        except (FileNotFoundError, PermissionError, ProcessLookupError): continue
+    return owners
+
+
+def managed_identity(info: dict, service: str, pid: int, proc_root=Path('/proc')) -> dict:
+    """Adopt only a process with this exact display, port and browser directory."""
+    process = proc_root/str(pid)
+    start = process_start(pid)
+    if not start or os.getpgid(pid) != pid: raise RuntimeError('Screen process ownership could not be verified')
+    args = process.joinpath('cmdline').read_bytes().decode().rstrip('\0').split('\0')
+    if len(args) < 2: raise RuntimeError('Screen process command could not be verified')
+    env = process.joinpath('environ').read_bytes().split(b'\0')
+    if ('DISPLAY='+info['display']).encode() not in env:
+        raise RuntimeError('The screen process belongs to another display')
+    def option(name, value):
+        return any(args[i:i+2] == [name,str(value)] for i in range(len(args)-1))
+    valid = False
+    if service == 'display':
+        valid = Path(args[0]).name in {'Xvnc','Xtigervnc'} and args[1] == info['display'] and option('-rfbport',info['vncPort']) and '-localhost' in args and option('-PasswordFile','/tmp/.vncpasswd')
+    elif service == 'viewer':
+        valid = any(Path(arg).name == 'websockify' for arg in args[:2]) and args[-2:] == [f"127.0.0.1:{info['wsPort']}",f"127.0.0.1:{info['vncPort']}"]
+    elif service == 'chrome':
+        valid = Path(args[0]).name in {'google-chrome','chrome'} and f"--remote-debugging-port={info['cdpPort']}" in args and '--remote-debugging-address=127.0.0.1' in args and '--user-data-dir='+str(Path(info['directory'])/'browser') in args
+    elif service == 'window-manager':
+        valid = Path(args[0]).name == 'xfwm4' and '--sm-client-disable' in args
+    if not valid or process_start(pid) != start: raise RuntimeError('An existing screen service has an unverified owner; it was preserved')
+    return {'pid':pid, 'start':start}
+
+
+def window_managers(info: dict) -> list[dict]:
+    result = []
+    for process in Path('/proc').iterdir():
+        if not process.name.isdigit(): continue
+        try:
+            if process.joinpath('comm').read_text().strip() == 'xfwm4':
+                result.append(managed_identity(info,'window-manager',int(process.name)))
+        except (OSError,RuntimeError): continue
+    return result
+
+
+def reconcile(profile: str) -> dict:
+    """Repair ownership records in place; never stop services or change a screen."""
+    if not PROFILE.fullmatch(profile): raise ValueError('Invalid agent profile')
+    computer = verify_binding(); base = root()
+    with locked(base/'registry.lock'):
+        registry_path = base/'screens.json'
+        registry = json.loads(registry_path.read_text()) if registry_path.exists() else {'default':99}
+        if profile == 'default' or profile not in registry:
+            return {'computerId':computer,'profile':profile,'reconciled':[]}
+        display = registry[profile]; directory = base/profile
+        info = {'profile':profile,'display':f':{display}','vncPort':5900+display,'wsPort':6100+display,'cdpPort':9300+display,'directory':str(directory)}
+        with locked(directory/'start.lock'), locked(directory/'action.lock'):
+            identities = {}
+            for service, key in [('display','vncPort'),('viewer','wsPort'),('chrome','cdpPort')]:
+                owners = port_owners(info[key])
+                if listening(info[key]) and not owners: raise RuntimeError('A live screen port owner could not be inspected; nothing was changed')
+                if len(owners) > 1: raise RuntimeError('A screen port has multiple owners; nothing was changed')
+                if owners: identities[service] = managed_identity(info,service,next(iter(owners)))
+            managers = window_managers(info)
+            if len(managers) > 1: raise RuntimeError('This screen has multiple window managers; nothing was changed')
+            if managers: identities['window-manager'] = managers[0]
+            for service, identity in identities.items():
+                if managed_identity(info,service,identity['pid']) != identity:
+                    raise RuntimeError('Screen ownership changed during repair; nothing was changed')
+            backup = directory/'ownership-backups'/str(time.time_ns())
+            backup.mkdir(mode=0o700,parents=True)
+            write_json(backup/'assignment.json',{'computerId':computer,'profile':profile,'display':display})
+            for service, identity in identities.items():
+                record = directory/(service+'.process.json')
+                if record.exists(): write_json(backup/record.name,json.loads(record.read_text()))
+                write_json(record,identity)
+    return {'computerId':computer,'profile':profile,'reconciled':sorted(identities),'backup':str(backup)}
+
+
 def inspect(profile: str) -> dict:
     """Observe assignments without allocating, renewing, or starting a screen."""
     if not PROFILE.fullmatch(profile):
@@ -393,11 +481,13 @@ def release(profile: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=["status", "capacity", "ensure", "pause", "resume", "hold", "drop", "cancel"])
+    parser.add_argument("operation", choices=["status", "repair", "capacity", "ensure", "pause", "resume", "hold", "drop", "cancel"])
     parser.add_argument("profile")
     parser.add_argument("owner", nargs='?', default='viewer')
     args = parser.parse_args()
-    if args.operation == 'capacity':
+    if args.operation == 'repair':
+        result = reconcile(args.profile)
+    elif args.operation == 'capacity':
         result = configure_capacity(args.profile, args.owner)
     elif args.operation in {'hold', 'drop'}:
         held = lease(args.profile, args.owner, 30 if args.operation == 'hold' else 0)

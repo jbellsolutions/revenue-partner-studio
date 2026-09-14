@@ -167,3 +167,45 @@ def test_update_sets_repair_job_only_with_verified_extension_and_rolls_it_back(i
     result=m['update'](cfg,source,True,setup_job='new-job')
     assert json.loads(cfg.read_text())=={**json.loads(old),'setupJob':'new-job'}
     assert (Path(result['backup'])/'connector-config.json').read_bytes()==old
+
+
+def test_legacy_orgo_paths_require_the_exact_supervised_connector(tmp_path,monkeypatch):
+    m=runpy.run_path(str(Path(__file__).parents[1]/'distribution/update-extension.py'))
+    target=tmp_path/'runtime';target.mkdir()
+    cfg=tmp_path/'connector.json';proc=tmp_path/'proc';python='/known/venv/bin/python'
+    for pid,args in [('101',[python,'-m','studio.cloud_connector','--config',str(cfg)]),('102',[python,'hermes','serve','--isolated'])]:
+        p=proc/pid;p.mkdir(parents=True);(p/'cwd').symlink_to(target,target_is_directory=True)
+        (p/'cmdline').write_bytes(('\0'.join(args)+'\0').encode())
+    monkeypatch.setattr(m['subprocess'],'check_output',lambda args,**kw:'101' if args[-1].endswith('connector') else '102')
+    wrapper=tmp_path/'screen-control';wrapper.write_text('# '+str(target)+'\n# hermes_cli.orgo_screens\n')
+    original={'computerId':'existing','screenControl':str(wrapper)}
+    resolved,changes=m['orgo_installation'](cfg,original,proc)
+    assert resolved=={**original,'sourceDir':str(target),'python':python}
+    assert str(cfg).encode() in changes[wrapper][1] and b'distribution/screen-control.py' in changes[wrapper][1]
+    assert wrapper.read_bytes()==changes[wrapper][0]
+    (proc/'101/cmdline').write_bytes((python+'\0-m\0studio.cloud_connector\0--config\0/another/config.json\0').encode())
+    with pytest.raises(RuntimeError,match='does not belong'):m['orgo_installation'](cfg,original,proc)
+
+
+def test_orgo_migration_backs_up_owned_wrapper_and_rolls_back_config(installation,monkeypatch):
+    m,source,target,home,cfg,task=installation
+    state=json.loads(cfg.read_text());state.pop('sourceDir');state['kind']='orgo';cfg.write_text(json.dumps(state))
+    old_config=cfg.read_bytes()
+    binding=home/'orgo-computer';binding.mkdir();(binding/'computer.json').write_text('{"computerId":"mac"}')
+    destination=home/'studio-cloud/runtime/workspace.sqlite3';destination.parent.mkdir();task.rename(destination)
+    for root in (source,target):
+        for name in ['hermes_cli/orgo_screens.py','hermes_cli/orgo_screen_mcp.py','distribution/screen-control.py']:
+            p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('VERSION = '+repr(root.name))
+    wrapper=cfg.parent/'screen-control';wrapper.write_text('old-wrapper');wrapper.chmod(0o700)
+    m['update'].__globals__['orgo_installation']=lambda configuration,value:({**value,'sourceDir':str(target),'python':'python'}, {wrapper:(b'old-wrapper',b'new-wrapper')})
+    monkeypatch.setattr(m['subprocess'],'run',lambda *a,**kw:SimpleNamespace(returncode=0))
+    def failed(cfg):raise RuntimeError('not ready')
+    m['update'].__globals__['verify_runtime']=failed
+    with pytest.raises(RuntimeError,match='not ready'):m['update'](cfg,source,True)
+    assert cfg.read_bytes()==old_config and wrapper.read_text()=='old-wrapper' and wrapper.stat().st_mode & 0o777==0o700
+    m['update'].__globals__['verify_runtime']=lambda cfg:None
+    result=m['update'](cfg,source,True)
+    assert wrapper.read_text()=='new-wrapper' and wrapper.stat().st_mode & 0o777==0o700
+    assert json.loads(cfg.read_text())['sourceDir']==str(target)
+    assert (Path(result['backup'])/'connector-config.json').read_bytes()==old_config
+    assert (Path(result['backup'])/'screen-control').read_text()=='old-wrapper'

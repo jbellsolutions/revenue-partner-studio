@@ -14,9 +14,10 @@ def legacy_screen(name):
 
 def browser_authorized(config):
     disabled=(config.get('agent') or {}).get('disabled_toolsets') or []
-    if 'orgo-screen' in disabled or 'browser' in disabled:return False
+    if 'orgo-screen' in disabled:return False
     from .service import specialist_toolsets
     if 'orgo-screen' in specialist_toolsets(config):return True
+    if 'browser' in disabled:return False
     grants=(config.get('tools') or {}).get('enabled_toolsets')
     if grants is None:grants=(config.get('platform_toolsets') or {}).get('cli')
     if grants is None:grants=config.get('toolsets')

@@ -38,3 +38,17 @@ def test_explicit_browser_disable_is_preserved(monkeypatch):
     enabled,disabled=tool_selection(cfg,['hermes-cli'])
     assert 'orgo-screen' not in enabled
     assert {'browser','cronjob','computer_use'}.issubset(disabled)
+
+
+def test_explicit_managed_screen_grant_keeps_generic_browser_and_other_tools_disabled(monkeypatch,tmp_path):
+    import hermes_constants
+    from studio import service
+    monkeypatch.setenv('HERMES_STUDIO_RUNTIME','1')
+    monkeypatch.setattr(hermes_constants,'get_hermes_home',lambda:tmp_path/'profiles'/'team-support')
+    monkeypatch.setattr(service,'screen_config',lambda profile:{'profile':profile})
+    cfg={'toolsets':['agent_team','orgo-screen'],'agent':{'disabled_toolsets':['browser','terminal','file']}}
+    assert mcp_servers(cfg,{})['orgo-screen']['profile']=='team-support'
+    enabled,disabled=tool_selection(cfg,cfg['toolsets'])
+    assert 'orgo-screen' in enabled and {'browser','terminal','file','computer_use'}.issubset(disabled)
+    cfg['agent']['disabled_toolsets'].append('orgo-screen')
+    assert mcp_servers(cfg,{})=={}

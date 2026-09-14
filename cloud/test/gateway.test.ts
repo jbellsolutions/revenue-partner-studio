@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
@@ -16,7 +16,7 @@ async function fixture(t: any, allowedOrigins: string[] = []) {
   const store = new Store(join(dir, 'state.db'))
   const a = store.addComputer(A, 'Same name'),
     b = store.addComputer(B, 'Same name')
-  const gateway = createGateway({ store, password, origin, allowedOrigins })
+  const gateway = createGateway({ store, password, origin, allowedOrigins, setupDir: dir })
   gateway.server.listen(0, '127.0.0.1')
   await once(gateway.server, 'listening')
   const url = 'http://127.0.0.1:' + (gateway.server.address() as any).port
@@ -43,7 +43,7 @@ async function fixture(t: any, allowedOrigins: string[] = []) {
     await once(socket, 'open')
     return { socket, messages }
   }
-  return { gateway, url, cookie, post, ws, a, b }
+  return { gateway, url, cookie, post, ws, a, b, store, dir }
 }
 async function until(fn: () => any) {
   for (let i = 0; i < 200; i++) {
@@ -141,6 +141,27 @@ test('duplicate connectors cannot replace an authenticated live owner', async t 
   const [code] = await once(second.socket, 'close')
   assert.equal(code, 1008)
   assert.equal(first.socket.readyState, WebSocket.OPEN)
+})
+test('an online Mac can prepare a repair without replacing its connection or credential', async t => {
+  const f = await fixture(t)
+  f.store.db.prepare("UPDATE computers SET kind='local',platform='darwin' WHERE id=?").run(A)
+  writeFileSync(join(f.dir, 'runtime.sha256'), 'a'.repeat(64))
+  writeFileSync(join(f.dir, 'connect-local.py'), '# test installer fixture\n')
+  const connection = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token })
+  const response = await f.post('/api/connections/local', { computerId: A })
+  assert.equal(response.status, 201)
+  const repair = await response.json()
+  assert.equal(repair.computerId, A)
+  assert.equal(f.store.computers().length, 2)
+  assert.equal(f.store.connector(A, f.a.token), true)
+  assert.equal(connection.socket.readyState, WebSocket.OPEN)
+  const download = await fetch(f.url + repair.download, { headers: { Cookie: f.cookie } })
+  assert.equal(download.status, 200)
+  assert.equal(download.headers.get('content-type'), 'application/zip')
+  assert.ok((await download.arrayBuffer()).byteLength > 0)
+  // Orgo identities cannot be repurposed as Mac repair destinations.
+  assert.notEqual((await f.post('/api/connections/local', { computerId: B })).status, 201)
+  assert.equal(f.store.connector(B, f.b.token), true)
 })
 test('metadata and login persist across a gateway process restart', () => {
   const dir = mkdtempSync(join(tmpdir(), 'studio-store-'))
