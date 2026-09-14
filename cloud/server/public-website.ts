@@ -37,7 +37,8 @@ export function publicWebsite(options?: PublicWebsiteOptions) {
     catch { return end(400, 'Invalid path') }
     // Even with an app cookie or Origin header, no API, connector, or setup route exists here.
     const page = pages.has(pathname.replace(/\/$/, '') || '/')
-    const asset = /^\/(?:assets|downloads)\/[A-Za-z0-9_./ -]+$/.test(pathname) || pathname === '/favicon.svg'
+    const asset = /^\/(?:assets|downloads)\/[A-Za-z0-9_./ -]+$/.test(pathname) ||
+      ['/favicon.svg', '/third-party-notices.txt'].includes(pathname)
     if (!page && !asset) return end(404, 'Not found')
     if (requestHost(req) === www) {
       res.setHeader('Location', canonical.origin + url.pathname + url.search)

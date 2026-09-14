@@ -16,6 +16,7 @@ async function fixture(t: any) {
   mkdirSync(join(website, 'downloads'))
   mkdirSync(app)
   writeFileSync(join(website, 'index.html'), '<h1>Fixture-only demo</h1>')
+  writeFileSync(join(website, 'third-party-notices.txt'), 'Public dependency attribution')
   writeFileSync(join(website, 'assets', 'demo.js'), 'console.log("simulation")')
   writeFileSync(join(website, 'downloads', 'prep.docx'), 'public preparation document')
   writeFileSync(join(app, 'index.html'), '<h1>Private app login</h1>')
@@ -56,6 +57,7 @@ test('website serves public routes, downloads and HEAD with no-network demo poli
   assert.equal(head.body, '')
   assert.equal(head.headers['content-length'], download.headers['content-length'])
   assert.equal((await f.get('/assets/demo.js')).status, 200)
+  assert.equal((await f.get('/third-party-notices.txt')).body, 'Public dependency attribution')
 })
 
 test('website cannot route to private APIs or setup, even with an owner cookie', async t => {
