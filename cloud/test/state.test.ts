@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { blankConversation, blankSpace, reduceEvent } from '../src/state.ts'
+import { blankConversation, blankSpace, reduceEvent, runtimeHealth } from '../src/state.ts'
 test('late replies cannot populate a different conversation with the same profile name', () => {
   const a = { ...blankSpace(), conversations: { 'default/one': { ...blankConversation(), runtimeId: 'a' } } }
   const b = { ...blankSpace(), conversations: { 'default/one': { ...blankConversation(), runtimeId: 'b' } } }
@@ -66,4 +66,38 @@ test('late task acknowledgment clears only the matching pending message', () => 
   assert.equal(result.conversations['default/a'].pendingSend, undefined)
   assert.equal(result.conversations['default/b'].pendingSend?.requestId, 'task-b')
   assert.equal(result.conversations['default/b'].draft, 'Keep B')
+})
+
+test('historical disconnects cannot turn a healthy computer offline or discard its live session', () => {
+  const s = { ...blankSpace(), online: true, healthCursor: 90,
+    conversations: { 'default/one': { ...blankConversation(), runtimeId: 'live', draft: 'keep' } } }
+  const old = reduceEvent(s, { seq: 80, kind: 'runtime.disconnected', replay: true })
+  assert.equal(old.online, true)
+  assert.equal(old.conversations['default/one'].runtimeId, 'live')
+  const current = reduceEvent(old, { seq: 91, kind: 'runtime.disconnected' })
+  assert.equal(current.online, false)
+  assert.equal(current.conversations['default/one'].runtimeId, '')
+  assert.equal(current.conversations['default/one'].draft, 'keep')
+})
+
+test('an expired session is detached without replacing its stored history or model', () => {
+  const s = { ...blankSpace(), online: true, conversations: {
+    'default/one': { ...blankConversation(), runtimeId: 'old', sessionId: 'stored', model: 'chosen', draft: 'keep' }
+  } }
+  const next = reduceEvent(s, { seq: 1, kind: 'session.reclaimed', runtimeId: 'old', agentId: 'default' })
+  assert.equal(next.conversations['default/one'].runtimeId, '')
+  assert.equal(next.conversations['default/one'].sessionId, 'stored')
+  assert.equal(next.conversations['default/one'].model, 'chosen')
+  assert.equal(next.online, true)
+})
+
+test('a stale health response cannot replace a newer runtime epoch', () => {
+  const s = { ...blankSpace(), online: true, healthCursor: 100, runtimeEpoch: 'new', conversations: {
+    'default/one': { ...blankConversation(), runtimeId: 'live', sessionId: 'saved', draft: 'keep' }
+  } }
+  assert.equal(runtimeHealth(s, { eventCursor: 90, epoch: 'old', runtimeConnected: false }), s)
+  const fresh = reduceEvent(s, { seq: 101, kind: 'runtime.connected', payload: { epoch: 'next' } })
+  assert.equal(fresh.conversations['default/one'].runtimeId, '')
+  assert.equal(fresh.conversations['default/one'].draft, 'keep')
+  assert.equal(fresh.conversations['default/one'].sessionId, 'saved')
 })

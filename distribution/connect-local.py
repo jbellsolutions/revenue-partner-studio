@@ -151,7 +151,7 @@ def install(configuration):
     write(token_file,state['token'].encode())
     if not runtime_token.exists():write(runtime_token,secrets.token_urlsafe(32).encode())
     write(binding,json.dumps({'computerId':state['computerId'],'cloudUrl':origin}).encode())
-    cfg={'kind':'local','computerId':state['computerId'],'hermesHome':str(home),'nativeSource':str(source),'sourceDir':str(runtime),'port':port,'stateDir':str(base/'local-connector'),'hermesUrl':'http://127.0.0.1:'+str(port),'hermesOrigin':'http://127.0.0.1:'+str(port),'hermesTokenFile':str(runtime_token),'cloudUrl':origin,'connectorTokenFile':str(token_file),'desktopHelper':str(executable)}
+    cfg={'setupJob':state['job'],'kind':'local','computerId':state['computerId'],'hermesHome':str(home),'nativeSource':str(source),'sourceDir':str(runtime),'port':port,'stateDir':str(base/'local-connector'),'hermesUrl':'http://127.0.0.1:'+str(port),'hermesOrigin':'http://127.0.0.1:'+str(port),'hermesTokenFile':str(runtime_token),'cloudUrl':origin,'connectorTokenFile':str(token_file),'desktopHelper':str(executable)}
     write(connector_file,json.dumps(cfg).encode());write(support/'config.json',json.dumps(cfg).encode())
     launch=runtime/'distribution/local-launch.py'
     environment={**os.environ,'PYTHONPATH':str(runtime),'HERMES_HOME':str(home),'STUDIO_COMPUTER_ID':state['computerId'],'STUDIO_COMPUTER_KIND':'local'}
@@ -160,7 +160,7 @@ def install(configuration):
     domain='gui/'+str(os.getuid());agents=Path.home()/'Library/LaunchAgents';agents.mkdir(exist_ok=True)
     for suffix,arguments in [('runtime',[str(python),str(launch),str(connector_file),'runtime']),('connector',[str(python),str(launch),str(connector_file),'connector']),('menu',[str(executable)])]:
         label='com.jbellsolutions.grokish-studio.'+suffix;plist=agents/(label+'.plist')
-        value={'Label':label,'ProgramArguments':arguments,'RunAtLoad':True,'KeepAlive':suffix!='menu','WorkingDirectory':str(runtime),'StandardOutPath':str(support/(suffix+'.log')),'StandardErrorPath':str(support/(suffix+'.log')),'ThrottleInterval':5}
+        value={'Label':label,'ProgramArguments':arguments,'RunAtLoad':True,'KeepAlive':suffix!='menu','WorkingDirectory':str(runtime),'StandardOutPath':str(support/(suffix+'.log')),'StandardErrorPath':str(support/(suffix+'.log')),'ThrottleInterval':5,'ProcessType':'Interactive'}
         subprocess.run(['/bin/launchctl','bootout',domain+'/'+label],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         write(plist,plistlib.dumps(value))
         start_service(domain,plist,support/'service-error.log')

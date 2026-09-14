@@ -17,6 +17,7 @@ import {
   blankConversation,
   blankSpace,
   reduceEvent,
+  runtimeHealth,
   selectedKey,
   currentConversation,
   restoreSpaces,
@@ -26,11 +27,13 @@ import {
   type Agent
 } from './state'
 import { Screen } from './screen'
+import { Delegations } from './delegations'
 import { TaskActions } from './task-actions'
 import { ConversationFiles } from './conversation-files'
 const AgentDetails = lazy(() => import('./agent-details').then(m => ({ default: m.AgentDetails })))
 const ModelPicker = lazy(() => import('./model-picker').then(m => ({ default: m.ModelPicker })))
 const Endpoints = lazy(() => import('./endpoints').then(m => ({ default: m.Endpoints })))
+const ProfileSettings = lazy(() => import('./profile-settings').then(m => ({ default: m.ProfileSettings })))
 import { ProviderKeys } from './provider-keys'
 import { ACCEPT, checkFiles, uploadAttachment, type Attachment } from './attachments'
 import '../../apps/desktop/src/app/bot-product/shell.css'
@@ -70,11 +73,13 @@ function App() {
   const followBottom = useRef(true)
   const modelRevisions = useRef(new Map<string, number>())
   const [showTests, setShowTests] = useState(false),
-    [settingsTab, setSettingsTab] = useState('accounts')
+    [settingsTab, setSettingsTab] = useState('agent')
+  const [detailsTab, setDetailsTab] = useState('instructions')
   const [pendingImport, setPendingImport] = useState<any>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const uploads = useRef<Record<string, File>>({})
   const sending = useRef(new Set<string>())
+  const opening = useRef(new Set<string>())
   const spacesRef = useRef(spaces)
   spacesRef.current = spaces
   const generations = useRef<Record<string, number>>({}),
@@ -180,9 +185,10 @@ function App() {
     try {
       const [list, status] = await Promise.all([rpc(id, 'agents.list'), rpc(id, 'status')])
       update(id, s => ({
-        ...s,
+        ...runtimeHealth(s, status),
         agents: list.agents,
-        online: status.runtimeConnected,
+        connectorOnline: true,
+        runtimeVersion: status.runtimeVersion,
         capabilities: status.capabilities,
         error: '',
         agentId: list.agents.some((a: Agent) => a.id === s.agentId) ? s.agentId : list.agents[0]?.id || 'default'
@@ -195,6 +201,7 @@ function App() {
     if (!auth || !computer) return
     localStorage.setItem('studio.computer', computer)
     void roster(computer)
+    void loadTasks(computer)
     let disposed = false,
       socket: WebSocket | undefined,
       retry: ReturnType<typeof setTimeout> | undefined,
@@ -224,9 +231,10 @@ function App() {
         if (frame.computerId !== computer) return
         if (frame.type === 'directory') setComputers(frame.computers)
         if (frame.type === 'connection') {
-          update(computer, s => ({ ...s, online: frame.online }))
+          update(computer, s => ({ ...s, connectorOnline: frame.online, ...(!frame.online ? { online: false } : {}) }))
           if (frame.online) void roster(computer)
         }
+        if (frame.type === 'replay.complete') void roster(computer)
         if (frame.type === 'event') {
           if (frame.kind === 'message.delta') {
             deltas.push(frame)
@@ -267,18 +275,20 @@ function App() {
   }, [computer, auth, update])
   useEffect(() => {
     if (agent && !conversation.readOnly && !conversation.runtimeId && !conversation.loading && space.online)
-      void open(computer, agent.id, conversation.sessionId || undefined)
+      void open(computer, agent.id, conversation.sessionId || undefined, false, true)
   }, [computer, agent?.id, space.online, conversation.runtimeId])
   useEffect(() => {
     if (followBottom.current) bottom.current?.scrollIntoView({ behavior: 'instant' })
   }, [computer, space.agentId, conversation.messages.length, conversation.stream])
-  async function open(id: string, aid: string, sessionId?: string, force = false) {
+  async function open(id: string, aid: string, sessionId?: string, force = false, recover = false) {
     const s = spacesRef.current[id] || blankSpace(),
       previous = currentConversation(s, aid)
     const cached = Object.entries(s.conversations).find(
       ([key, c]) => key.startsWith(aid + '/') && sessionId && c.sessionId === sessionId
     )
-    const key = cached?.[0] || aid + '/' + (sessionId || crypto.randomUUID())
+    const key = cached?.[0] || ((recover || force) ? selectedKey(s, aid) : aid + '/' + (sessionId || crypto.randomUUID()))
+    const guard = id + ':' + key
+    if (opening.current.has(guard)) return
     update(id, s => ({
       ...s,
       selected: { ...s.selected, [aid]: key },
@@ -288,13 +298,14 @@ function App() {
       }
     }))
     if ((cached?.[1].runtimeId || cached?.[1].readOnly) && !force) return
-    const guard = id + ':' + key
+    opening.current.add(guard)
     const version = (generations.current[guard] || 0) + 1
     generations.current[guard] = version
     updateChat(id, aid, c => ({ ...c, loading: true, error: '' }), key)
     try {
       const result = await rpc(id, 'sessions.open', {
         agentId: aid,
+        conversationId: key,
         sessionId,
         model: previous.model,
         provider: previous.provider
@@ -320,6 +331,8 @@ function App() {
     } catch (e) {
       if (generations.current[guard] === version)
         updateChat(id, aid, c => ({ ...c, loading: false, error: (e as Error).message }), key)
+    } finally {
+      opening.current.delete(guard)
     }
   }
   async function send(event: React.FormEvent) {
@@ -852,6 +865,7 @@ function App() {
             >
               {selected?.online ? 'Reconnect conversation' : 'Connect / Repair computer'}
             </button>
+            {selected?.kind === 'local' && <button onClick={() => setModal('local')}>Repair local Hermes</button>}
           </div>
         )}
         <ConversationFiles
@@ -918,6 +932,12 @@ function App() {
                 more={expandMessage}
               />
             ))}
+          <Delegations key={computer + ':' + space.agentId} computer={computer} agent={space.agentId}
+            tasks={space.tasks} peerRevision={space.peerRevision || 0} online={space.online} computers={computers}
+            openAgent={(target, name, stored) => {
+              update(target, s => ({ ...s, agentId: name })); setComputer(target)
+              if (stored) void open(target, name, stored)
+            }} reviewTrust={() => setModal('grants')} />
           {conversation.running && (
             <article className="message assistant">
               <div className="message-author">
@@ -1156,6 +1176,8 @@ function App() {
                 Chat and files use this Mac’s Hermes profile. Sharing with another computer follows your trusted
                 connections.
               </p>
+              <p role="status">{!selected.online ? 'Mac offline' : !space.online ? 'Mac connected · Hermes reconnecting' : conversation.loading ? 'Hermes ready · opening conversation' : conversation.error ? 'Hermes ready · conversation needs attention' : conversation.runtimeId ? 'Conversation ready' : 'Hermes ready'}</p>
+              <button onClick={() => setModal('local')}>Repair local Hermes</button>
               <button onClick={() => setModal('files')}>Browse Mac files</button>
               <button onClick={() => setDetails(true)}>Profiles, skills & memory</button>
             </section>
@@ -1166,7 +1188,9 @@ function App() {
               agent={agent.id}
               agentName={title(agent)}
               computerName={selected?.name || 'Orgo'}
-              enabled={!!space.capabilities.screens && space.online}
+              enabled={!!space.capabilities.screens && !!selected?.online}
+              diagnostics={!!space.capabilities.screenDiagnostics}
+              onRepair={() => setModal('computers')}
             />
           ))}
         <section className="task-section">
@@ -1243,6 +1267,7 @@ function App() {
       {details && agent && (
         <Suspense fallback={<div className="toast">Opening profile…</div>}>
           <AgentDetails
+                initialTab={detailsTab}
             key={computer + ':' + agent.id}
             computer={computer}
             agent={agent.id}
@@ -1440,7 +1465,7 @@ function App() {
                     changed={modelChanged}
                   />
                 </Suspense>
-                <details>
+                {settingsTab === 'advanced' && <details open>
                   <summary>Computer task limits</summary>
                   <h3>Computer task limits</h3>
                   <label>
@@ -1479,18 +1504,30 @@ function App() {
                     Existing per-profile turn limits are retained. Additional turns share this computer's available
                     resources.
                   </p>
-                </details>
+                </details>}
                 <div className="settings-tabs" role="tablist" aria-label="Provider settings">
                   {[
+                    ['agent', 'Hermes settings'],
                     ['accounts', 'Subscriptions'],
                     ['keys', 'API keys'],
-                    ['endpoints', 'Custom endpoints']
+                    ['endpoints', 'Custom endpoints'],
+                    ['advanced', 'Advanced']
                   ].map(([id, label]) => (
                     <button key={id} role="tab" aria-selected={settingsTab === id} onClick={() => setSettingsTab(id)}>
                       {label}
                     </button>
                   ))}
                 </div>
+                {settingsTab === 'agent' && <div className="settings-shortcuts">
+                  <p>Your agent’s Hermes workspace, on {selected?.name}.</p>
+                  {['instructions', 'skills', 'memory', 'connections'].map(tab => <button key={tab} onClick={() => {
+                    setDetailsTab(tab); setModal(''); setDetails(true)
+                  }}>{tab[0].toUpperCase() + tab.slice(1)} →</button>)}
+                  <p className="small-note">Subscriptions and API keys have their own tabs. Advanced contains reasoning, tool permissions, and work limits.</p>
+                </div>}
+                {settingsTab === 'advanced' && <Suspense fallback={<p>Opening agent settings…</p>}>
+                  <ProfileSettings key={computer + ':' + space.agentId} computer={computer} agent={space.agentId} supported={!!space.capabilities.profileSettings} screens={!!space.capabilities.screenDiagnostics} />
+                </Suspense>}
                 {settingsTab === 'keys' && (
                   <ProviderKeys key={computer + ':' + space.agentId} computer={computer} agent={space.agentId} />
                 )}

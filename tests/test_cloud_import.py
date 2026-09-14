@@ -6,6 +6,13 @@ import pytest
 import yaml
 from studio.cloud_import import build_bundle, apply_bundle
 
+@pytest.fixture(autouse=True)
+def available_import_storage(monkeypatch):
+    # Exercise archive logic independently of unrelated host disk pressure.
+    from types import SimpleNamespace
+    monkeypatch.setattr("studio.cloud_archive.shutil.disk_usage", lambda _: SimpleNamespace(free=8 * 1024**3))
+
+
 
 def test_import_keeps_narrow_tool_grants_and_disabled_tools():
     from studio.cloud_import import safe_settings
@@ -144,3 +151,12 @@ def test_only_derived_trigram_index_is_rebuilt_on_staged_copy(tmp_path):
         assert db.execute('SELECT content FROM messages').fetchone()[0]=='Original history'
         assert db.execute("SELECT rowid FROM messages_fts_trigram WHERE messages_fts_trigram MATCH 'destination'").fetchone()[0]==1
     assert validate_history(path)==[]
+
+
+def test_archive_rejects_low_storage_before_accepting_bytes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from studio.cloud_archive import Uploads
+    monkeypatch.setattr('studio.cloud_archive.shutil.disk_usage', lambda _: SimpleNamespace(free=100))
+    uploads=Uploads(tmp_path,'computer')
+    with pytest.raises(ValueError,match='free disk space'):uploads.begin(5,'a'*64)
+    assert not list(uploads.base.glob('*.part'))

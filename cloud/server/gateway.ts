@@ -30,6 +30,7 @@ type Pending = {
 type Viewer = { id: string; socket: WebSocket; computer: string; cursor: number; replaying: boolean; buffer: any[] }
 type Client = WebSocket & { alive?: boolean; sessionToken?: string }
 const METHODS = new Set([
+  'connection.status', 'screen.status', 'screen.capacity', 'profile.settings.get', 'profile.settings.update',
   'models.options', 'models.select', 'models.status', 'skills.update', 'endpoints.configure', 'endpoints.list',
   'explorer.roots','explorer.add','explorer.list','explorer.read','explorer.folders','explorer.choose','library.profiles',
   'status',
@@ -375,11 +376,12 @@ export function createGateway(options: Options) {
               for (const v of viewers)
                 if (v.computer === computer && v.id === m.viewerId) {
                   if (m.type === 'replay.event') {
-                    send(v.socket, { ...m, type: 'event' })
+                    send(v.socket, { ...m, type: 'event', replay: true })
                   } else {
                     v.replaying = false
                     for (const event of v.buffer) send(v.socket, event)
                     v.buffer = []
+                    send(v.socket, { type: 'replay.complete', computerId: computer })
                   }
                 }
             }

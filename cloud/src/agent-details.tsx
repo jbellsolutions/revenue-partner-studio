@@ -8,16 +8,18 @@ export function AgentDetails({
   agent,
   name,
   computerName,
-  close
+  close,
+  initialTab = 'instructions'
 }: {
   computer: string
   agent: string
   name: string
   computerName: string
   close: () => void
+  initialTab?: string
 }) {
   const [data, setData] = useState<any>(null),
-    [tab, setTab] = useState('instructions'),
+    [tab, setTab] = useState(initialTab),
     [docs, setDocs] = useState<Record<string, Document>>({}),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState('')

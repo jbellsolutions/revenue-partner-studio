@@ -15,6 +15,17 @@ def connector(tmp_path):
         'cloudUrl': 'http://localhost:8788'})
 
 
+def test_diagnostic_disk_failure_does_not_disconnect_transport(tmp_path, monkeypatch):
+    c=connector(tmp_path)
+    def full_disk(*args): raise OSError(28, 'No space left on device')
+    monkeypatch.setattr('studio.cloud_import.atomic_write',full_disk)
+    c.connection_diagnostic('hermes')
+    c.connection_diagnostic('cloud',ConnectionError('offline'))
+    # This exemption covers diagnostics only; durable work still uses its ledger.
+    c.ledger.begin('task','chat.send',{})
+    assert c.ledger.requests()[0]['state']=='dispatching'
+
+
 @pytest.mark.asyncio
 async def test_peer_handoff_carries_selected_source_agent_to_native_outbox(tmp_path):
     c=connector(tmp_path);child=c.home/'profiles/email';child.mkdir(parents=True);(child/'config.yaml').write_text('model: test')

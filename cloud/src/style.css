@@ -1607,3 +1607,19 @@ button:active:not(:disabled) {
     transform: none;
   }
 }
+
+.settings-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.settings-shortcuts p { grid-column: 1 / -1; }
+.settings-shortcuts button { text-align: left; padding: 14px; }
+.profile-settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.profile-settings .tool-permission { display: flex; align-items: center; gap: 9px; margin: 8px 0; }
+.profile-settings .tool-permission input { width: auto; margin: 0; }
+.profile-settings details { max-height: 280px; overflow: auto; margin: 16px 0; }
+.screen-owners { margin: 10px 12px; font-size: 12px; }
+.delegation-feed { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #303034); border-radius: 14px; }
+.delegation-feed h3 { font-size: 13px; margin: 0 0 12px; }
+.delegation-feed article { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 0; }
+.delegation-feed article + article { border-top: 1px solid var(--border, #303034); }
+.delegation-feed p, .delegation-feed details { flex-basis: 100%; margin: 0; overflow-wrap: anywhere; }
+.delegation-feed span, .delegation-feed small { font-size: 12px; opacity: .8; }
+@media (max-width: 600px) { .settings-shortcuts { grid-template-columns: 1fr; } }

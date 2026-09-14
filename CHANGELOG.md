@@ -1,3 +1,12 @@
+## Unreleased — screen and local recovery
+
+- Read-only screen ownership diagnostics, explicit capacity/repair states and bounded viewer reconnects; chat stays independent of viewer failure.
+- Profile-aware conversation recovery, runtime-epoch checks and background dispatch for slow Mac operations.
+- Simple Hermes settings and Advanced reasoning, tool restrictions and turn limits, with changed-field saves, conflict detection and between-turn activation.
+- Recent local and cross-computer handoffs with recipient links, acknowledgment, results and permission/error status.
+- Guarded extension updates with verified backups, readiness checks and source rollback. Mac service scheduling supports interactive requests; native Hermes and credentials remain intact.
+- These changes do not establish live GTM screen acceptance or the new 24-hour qualification. See docs/RELEASE-CHECKS.md.
+
 ## Revenue Partner Studio v0.2.0-beta.2
 
 - Chat model menu with connected-provider search, manual IDs, pending/error feedback and computer/profile/conversation isolation.

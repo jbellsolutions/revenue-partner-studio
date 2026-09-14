@@ -9,6 +9,16 @@ import os
 from pathlib import Path
 import sys
 
+
+def protect_dispatch(server):
+    """Keep extension work off the native transport reader, including on Macs."""
+    if not hasattr(server, '_LONG_HANDLERS'):
+        raise RuntimeError('This Hermes version lacks compatible background RPC dispatch.')
+    server._LONG_HANDLERS = frozenset(server._LONG_HANDLERS) | {
+        'studio.operation', 'studio.snapshot', 'studio.a2a', 'studio.events',
+        'session.create', 'session.resume', 'session.list',
+    }
+
 def prepare(native):
     native=Path(native).resolve()
     if not (native/'tui_gateway/server.py').is_file():raise RuntimeError('The installed Hermes runtime could not be found.')
@@ -17,6 +27,7 @@ def prepare(native):
     required={'session.create','session.resume','session.list','prompt.submit','session.interrupt','profiles.create'}
     missing=required-set(server._methods)
     if missing:raise RuntimeError('This Hermes version lacks required Studio operations: '+', '.join(sorted(missing)))
+    protect_dispatch(server)
     import toolsets
     toolsets.TOOLSETS['studio']={'description':'Persistent Studio teammates','tools':['studio_team'],'includes':[]}
     original=server._gui_surface_toolsets
@@ -47,14 +58,25 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--native',required=True);p.add_argument('--port',type=int,default=8791);p.add_argument('--check',action='store_true')
     args=p.parse_args()
     os.environ['HERMES_STUDIO_RUNTIME']='1';os.environ['STUDIO_COMPUTER_KIND']='local'
+    import faulthandler
+    faulthandler.dump_traceback_later(20)
     server=prepare(args.native)
     if args.check:
         import json
         from .service import current
         current().snapshot()
+        faulthandler.cancel_dump_traceback_later()
         print(json.dumps({'compatible':True,'methods':sorted(m for m in server._methods if m.startswith('studio.'))}))
         return
-    from hermes_cli.web_server import start_server
-    start_server(host='127.0.0.1',port=args.port,open_browser=False,headless=True)
+    from hermes_cli import web_server
+    # A private stack trace makes startup stalls diagnosable without touching
+    # native Hermes files or dumping profile settings/credentials.
+    original_started = web_server._on_server_started
+    def started(*a, **kw):
+        result = original_started(*a, **kw)
+        faulthandler.cancel_dump_traceback_later()
+        return result
+    web_server._on_server_started = started
+    web_server.start_server(host='127.0.0.1',port=args.port,open_browser=False,headless=True)
 
 if __name__=='__main__':main()

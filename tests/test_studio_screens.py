@@ -78,3 +78,31 @@ def test_expired_viewer_lease_allows_reclaim_but_human_control_does_not(registry
     state=json.loads((registry/'screens.json').read_text())
     assert 'a' not in state and 'b' in state
     assert screens.screen('waiting')['display']==':100'
+
+
+def test_diagnostics_never_allocate_start_or_extend_a_lease(registry, monkeypatch):
+    monkeypatch.setattr(screens, 'listening', lambda port: False)
+    assert screens.inspect('brent')['state'] == 'unassigned'
+    assert not (registry/'screens.json').exists()
+    screens.screen('brent')
+    before = (registry/'brent/leases.json').read_bytes()
+    assert screens.inspect('brent')['state'] == 'starting'
+    assert (registry/'brent/leases.json').read_bytes() == before
+    assert not (registry/'brent/display.process.json').exists()
+
+
+def test_capacity_cannot_exceed_host_qualification_and_does_not_count_head(registry):
+    (registry/'screen-capacity.json').write_text(json.dumps({'requested': 8, 'qualified': 6}))
+    screens.screen('default')
+    for i in range(6): screens.screen('specialist-' + str(i))
+    with pytest.raises(screens.ScreenBusy) as e: screens.screen('seventh')
+    assert e.value.capacity == 6 and e.value.position == 1
+
+
+def test_unverified_screen_process_is_reported_without_taking_ownership(registry, monkeypatch):
+    screens.screen('brent')
+    monkeypatch.setattr(screens, 'listening', lambda port: True)
+    monkeypatch.setattr(screens.os, 'killpg', lambda *a: pytest.fail('diagnostics cannot stop a process'))
+    result = screens.inspect('brent')
+    assert result['state'] == 'repair_needed' and result['reason'] == 'unverified_owner'
+    assert not (registry/'brent/display.process.json').exists()

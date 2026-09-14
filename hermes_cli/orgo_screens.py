@@ -22,12 +22,41 @@ import urllib.request
 PROFILE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 COMPUTER = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
 SPECIALIST_DISPLAYS = range(100, 104)
+MAX_SPECIALISTS = 16
+
+
+def capacity():
+    """Retain the four-slot baseline; extra slots require host qualification."""
+    base = root()
+    path = base / 'screen-capacity.json'
+    value = json.loads(path.read_text()) if path.exists() else {}
+    qualified = max(4, min(MAX_SPECIALISTS, int(value.get('qualified', 4))))
+    requested = max(1, min(MAX_SPECIALISTS, int(value.get('requested', 4))))
+    return {'specialists': min(requested, qualified), 'qualified': qualified,
+            'qualification': 'host_verified' if value.get('qualified') else 'baseline',
+            'requested': requested, 'headScreen': True}
+
+
+def configure_capacity(profile, count):
+    computer = verify_binding()
+    if not PROFILE.fullmatch(profile): raise ValueError('Invalid agent profile')
+    count = int(count)
+    with locked(root() / 'registry.lock'):
+        current = capacity()
+        if not 1 <= count <= current['qualified']:
+            raise ValueError('This screen count has not been qualified on this computer')
+        path = root() / 'screen-capacity.json'
+        value = json.loads(path.read_text()) if path.exists() else {}
+        write_json(path, {**value, 'requested': count})
+    return {'computerId': computer, 'profile': profile, 'capacity': capacity()}
 
 
 class ScreenBusy(RuntimeError):
     def __init__(self, position):
         self.position = position
-        super().__init__(f'All four specialist screens are assigned; queued at position {position}')
+        self.capacity = capacity()['specialists']
+        count = 'four' if self.capacity == 4 else str(self.capacity)
+        super().__init__(f'All {count} specialist screens are assigned; queued at position {position}')
 
 
 def queue_state(base):
@@ -132,7 +161,7 @@ def screen(profile: str) -> dict:
             row = next((r for r in queue if r['profile'] == profile), None)
             if row: row['seen'] = time.time()
             else: queue.append({'profile': profile, 'seen': time.time()})
-            free = sorted(set(SPECIALIST_DISPLAYS) - set(state.values()))
+            free = sorted(set(range(100, 100 + capacity()['specialists'])) - set(state.values()))
             if not free or queue[0]['profile'] != profile:
                 write_json(base / 'screen-queue.json', queue)
                 raise ScreenBusy(next(i + 1 for i, r in enumerate(queue) if r['profile'] == profile))
@@ -235,6 +264,42 @@ def process_start(pid: int) -> str | None:
         return None
 
 
+def inspect(profile: str) -> dict:
+    """Observe assignments without allocating, renewing, or starting a screen."""
+    if not PROFILE.fullmatch(profile):
+        raise ValueError('Invalid agent profile')
+    computer = verify_binding()
+    base = root()
+    path = base / 'screens.json'
+    registry = json.loads(path.read_text()) if path.exists() else {'default': 99}
+    queue = queue_state(base)
+    occupied = []
+    for name, display in registry.items():
+        directory = base / name
+        leases = directory / 'leases.json'
+        held = json.loads(leases.read_text()) if leases.exists() else {}
+        occupied.append({'agentId': name, 'display': f':{display}',
+                         'humanControl': (directory / 'paused').exists(),
+                         'viewer': any(k.startswith('view-') and v > time.time() for k, v in held.items()),
+                         'working': any(k.startswith('task-') and v > time.time() for k, v in held.items()),
+                         'legacyOwnership': name != 'default' and not leases.exists()})
+    result = {'computerId': computer, 'profile': profile, 'capacity': capacity(),
+              'occupied': occupied, 'position': next((i + 1 for i, row in enumerate(queue) if row['profile'] == profile), None)}
+    if profile not in registry:
+        return {**result, 'state': 'waiting' if result['position'] else 'unassigned'}
+    display = registry[profile]
+    directory = base / profile
+    for service, offset in [('display', 5900), ('viewer', 6100), ('chrome', 9300)]:
+        if profile != 'default' and listening(offset + display):
+            record = directory / (service + '.process.json')
+            owner = json.loads(record.read_text()) if record.exists() else {}
+            if not owner.get('start') or process_start(owner.get('pid', 0)) != owner['start']:
+                return {**result, 'state': 'repair_needed', 'reason': 'unverified_owner',
+                        'message': 'An existing screen service has no verified owner. Its work has been preserved; repair requires ownership reconciliation.'}
+    return {**result, 'display': f':{display}', 'paused': (directory / 'paused').exists(),
+            'state': 'ready' if listening(5900 + display) and listening(6100 + display) else 'starting'}
+
+
 def validate_assignment(info: dict) -> None:
     path = root() / "screens.json"
     state = json.loads(path.read_text()) if path.exists() else {"default": 99}
@@ -328,11 +393,13 @@ def release(profile: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=["status", "ensure", "pause", "resume", "hold", "drop", "cancel"])
+    parser.add_argument("operation", choices=["status", "capacity", "ensure", "pause", "resume", "hold", "drop", "cancel"])
     parser.add_argument("profile")
     parser.add_argument("owner", nargs='?', default='viewer')
     args = parser.parse_args()
-    if args.operation in {'hold', 'drop'}:
+    if args.operation == 'capacity':
+        result = configure_capacity(args.profile, args.owner)
+    elif args.operation in {'hold', 'drop'}:
         held = lease(args.profile, args.owner, 30 if args.operation == 'hold' else 0)
         result = {**(screen(args.profile) if held and args.operation == 'hold' else {}), 'held': held, 'computerId': verify_binding(), 'profile': args.profile}
     elif args.operation == 'cancel':
@@ -343,10 +410,9 @@ def main():
     elif args.operation == "ensure":
         try: result = ensure(args.profile)
         except ScreenBusy as exc:
-            result = {'queued': True, 'position': exc.position, 'computerId': verify_binding(), 'profile': args.profile}
+            result = {'queued': True, 'position': exc.position, 'capacity': capacity(), 'computerId': verify_binding(), 'profile': args.profile}
     else:
-        result = screen(args.profile)
-        result["paused"] = (Path(result["directory"]) / "paused").exists()
+        result = inspect(args.profile)
     print(json.dumps(result))
 
 

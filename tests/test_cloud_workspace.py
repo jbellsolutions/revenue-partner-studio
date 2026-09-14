@@ -10,6 +10,13 @@ from studio.cloud_library import Library
 from studio.cloud_permissions import accept,allowed,receive
 from studio.cloud_archive import Uploads,apply_archive
 
+@pytest.fixture(autouse=True)
+def available_import_storage(monkeypatch):
+    # Exercise archive logic independently of unrelated host disk pressure.
+    from types import SimpleNamespace
+    monkeypatch.setattr("studio.cloud_archive.shutil.disk_usage", lambda _: SimpleNamespace(free=8 * 1024**3))
+
+
 A='10000000-0000-4000-8000-000000000001'
 B='10000000-0000-4000-8000-000000000002'
 def home(path):

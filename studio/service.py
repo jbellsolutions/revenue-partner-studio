@@ -94,7 +94,7 @@ class Service:
                 'maxPeerHops':max(1,min(5,int(value.get('maxPeerHops',5))))}
 
     def task_event(self,delivery_id):
-        rows=self.store.rows('SELECT id,recipient,state,runtime_id,stored_id,body,result FROM deliveries WHERE id=?',(delivery_id,))
+        rows=self.store.rows('SELECT id,sender,recipient,state,runtime_id,stored_id,body,result,created,updated FROM deliveries WHERE id=?',(delivery_id,))
         if rows and hasattr(self.server,'_emit'):
             value=rows[0];value['body']=(value['body'] or '')[:1000];value['result']=(value['result'] or '')[:1000]
             self.server._emit('studio.task','',value)
@@ -204,6 +204,10 @@ class Service:
         if op in {'model_select', 'model_status'}:
             if actor != 'user': raise PermissionError('Only the owner may change a conversation model')
             from .cloud_models import operation
+            return operation(self, p)
+        if op in {'profile_settings_get', 'profile_settings_update'}:
+            if actor != 'user': raise PermissionError('Only the owner may manage profile settings')
+            from .cloud_settings import operation
             return operation(self, p)
         if op in {'profile_describe','profile_update','provider_keys','provider_configure','provider_check','model_options','skill_update','endpoint_configure','endpoint_list'}:
             if actor!='user': raise PermissionError('Only the owner may manage profile settings')
@@ -491,6 +495,12 @@ def register(server):
                 return server._err(rid,4095,'Profiles are being imported; accepted work remains queued')
             if _service.active_turns()>=_service.settings()['maxConcurrent']:
                 return server._err(rid,4095,'Computer concurrency limit reached; work remains queued')
+            session = server._sessions.get(params.get('session_id'))
+            if session and not session.get('running'):
+                from .cloud_settings import apply_pending
+                try: apply_pending(_service, params['session_id'], session)
+                except Exception:
+                    return server._err(rid, 4095, 'Saved settings could not be activated. Review this agent’s settings before sending another turn.')
             return original_prompt(rid,params)
     server._methods['prompt.submit']=limited_prompt
     def a2a(rid,params):
@@ -498,7 +508,24 @@ def register(server):
         try: return server._ok(rid,dispatch(_service,params))
         except Exception as exc: return server._err(rid,4096,str(exc))
     server._methods['studio.a2a']=a2a
-    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'limits':_service.settings()})
+    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'profileSettings':True,'sessionRecovery':True,'extensionVersion':'screens-recovery-1','limits':_service.settings()})
+    from .session_recovery import inspect_session, bind_session
+    original_create = server._methods['session.create']
+    def create_session(rid, params):
+        result = original_create(rid, params)
+        runtime = result.get('result', {}).get('session_id')
+        identity = params.get('studio_conversation_id')
+        if runtime and isinstance(identity, str) and 1 <= len(identity) <= 200:
+            server._sessions[runtime]['studio_conversation_id'] = identity
+        return result
+    server._methods['session.create'] = create_session
+    def session_method(fn):
+        def invoke(rid, params):
+            try: return server._ok(rid, fn(_service, params))
+            except Exception as exc: return server._err(rid, 4091, str(exc))
+        return invoke
+    server._methods['studio.session'] = session_method(inspect_session)
+    server._methods['studio.session.bind'] = session_method(bind_session)
     server._methods['studio.snapshot']=lambda rid,params:server._ok(rid,_service.snapshot())
     def events(rid,params):
         if params.get('summary'):

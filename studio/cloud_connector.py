@@ -23,7 +23,7 @@ from websockets.asyncio.client import connect
 from .cloud_ledger import Ledger
 
 PROFILE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
-WRITES = {'chat.send', 'chat.cancel', 'agents.create', 'import.apply', 'settings.update',
+WRITES = {'chat.send', 'chat.cancel', 'agents.create', 'import.apply', 'settings.update', 'profile.settings.update', 'screen.capacity',
           'import.commit', 'tasks.cancel', 'tasks.resume', 'a2a.receive', 'providers.begin', 'providers.submit', 'peer.send', 'peer.receive', 'approvals.resolve',
           'agents.update', 'providers.configure', 'skills.update', 'models.select', 'endpoints.configure'}
 
@@ -52,6 +52,8 @@ class Connector:
         self.hermes = None
         self.cloud = None
         self.ready = asyncio.Event()
+        self.runtime_epoch = ''
+        self.runtime_error = ''
         self.pending = {}
         self.peer_pending = {}
         self.request_locks = {}
@@ -147,7 +149,12 @@ class Connector:
                 value['closeCode']=received.code
                 safe={'Invalid connector frame','Computer identity mismatch','Stopped on Mac','A connector already owns this computer','Session ended'}
                 value['reason']=received.reason if received.reason in safe else 'Connection closed'
-        atomic_write(self.base/(area+'-connection.json'),json.dumps(value).encode())
+        try:
+            atomic_write(self.base/(area+'-connection.json'),json.dumps(value).encode())
+        except OSError:
+            # Diagnostics must never bring down an otherwise usable transport.
+            # Durable task writes still fail closed if storage is exhausted.
+            pass
 
     async def hermes_loop(self):
         while True:
@@ -158,9 +165,12 @@ class Connector:
                                    origin=self.config.get('hermesOrigin', 'http://localhost:8787'),
                                    max_size=32 * 1024 * 1024, ping_interval=2, ping_timeout=3) as ws:
                     self.hermes = ws
+                    self.runtime_epoch = uuid.uuid4().hex
+                    self.runtime_error = ''
                     self.ready.set()
                     self.capabilities['chat'] = True
-                    await self.emit('runtime.connected', {'connected': True})
+                    self.connection_diagnostic('hermes')
+                    await self.emit('runtime.connected', {'connected': True, 'epoch': self.runtime_epoch})
                     async for raw in ws:
                         message = json.loads(raw)
                         if 'id' in message and message['id'] in self.pending:
@@ -182,10 +192,12 @@ class Connector:
             except Exception as exc:
                 self.ready.clear()
                 self.capabilities['chat'] = False
+                self.runtime_error = type(exc).__name__
+                self.connection_diagnostic('hermes', exc)
                 for future in list(self.pending.values()):
                     if not future.done():
                         future.set_exception(ConnectionError('Hermes connection interrupted'))
-                await self.emit('runtime.disconnected', {'connected': False, 'reason': type(exc).__name__})
+                await self.emit('runtime.disconnected', {'connected': False, 'reason': type(exc).__name__, 'epoch': self.runtime_epoch})
                 await asyncio.sleep(2)
             finally:
                 self.ready.clear()
@@ -301,21 +313,32 @@ class Connector:
             if method=='library.export':
                 async with self.upload_lock:return await asyncio.to_thread(library.export,p['targetComputerId'],p['profiles'],request_id,p.get('selection'))
             raise ValueError('Unknown Hermes library operation')
-        if method == 'status':
+        if method in {'status', 'connection.status'}:
+            capabilities = {}
+            error = ''
             try:
                 if not self.ready.is_set():
                     raise RuntimeError('Hermes is offline')
                 capabilities = await self.rpc('studio.capabilities', {})
                 self.capabilities['teams'] = bool(capabilities.get('teams'))
                 self.capabilities['a2a'] = bool(capabilities.get('a2a'))
-                for capability in ('files','profiles','providerKeys','librarySkills'):
+                for capability in ('files','profiles','providerKeys','librarySkills','profileSettings','sessionRecovery'):
                     self.capabilities[capability] = bool(capabilities.get(capability))
-            except RuntimeError:
+            except (RuntimeError, TimeoutError, ConnectionError):
                 self.capabilities['teams'] = False
+                error = 'Hermes is reconnecting or could not respond. Your profiles and history remain on this computer.'
             self.capabilities['screens'] = bool(self.config.get('screenControl') or self.local_screen)
             self.capabilities['localDesktop'] = bool(self.local_screen)
             self.capabilities.update({'explorer':True,'library':True})
-            return {'computerId': self.computer, 'capabilities': self.capabilities, 'runtimeConnected': self.ready.is_set(), 'protocol': 1}
+            connected = self.ready.is_set() and not error
+            self.capabilities['chat'] = connected
+            self.capabilities['screenDiagnostics'] = bool(self.config.get('screenControl'))
+            return {'computerId': self.computer, 'capabilities': self.capabilities,
+                    'runtimeConnected': connected, 'connectorConnected': True,
+                    'epoch': self.runtime_epoch, 'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
+                    'state': 'ready' if connected else 'hermes_unavailable', 'message': error,
+                    'runtimeVersion': capabilities.get('extensionVersion', 'legacy'),
+                    'connectorVersion': 'screens-recovery-1', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
         if method=='import.preview':
             from .cloud_library import Library
             if p.get('bundle'):return await asyncio.to_thread(Library(self.home).preview,self.computer,p['bundle'])
@@ -358,11 +381,20 @@ class Connector:
         if method == 'sessions.open':
             self.profile(agent)
             stored = p.get('sessionId')
+            existing = None
+            if self.capabilities.get('sessionRecovery'):
+                existing = await self.rpc('studio.session', {'agentId': agent, 'sessionId': stored,
+                    'conversationId': p.get('conversationId')})
+                if existing.get('runtimeId'):
+                    stored = existing['sessionId']
             if stored:
                 if self.history_source(agent, stored)[2]:
                     return {'runtimeId':'','sessionId':stored,'readOnly':True,'info':{}, **await asyncio.to_thread(self.history,agent,stored)}
-                await asyncio.to_thread(self.history, agent, stored)
+                if not existing or not existing.get('runtimeId'):
+                    await asyncio.to_thread(self.history, agent, stored)
             params = {'profile': agent, 'source': 'studio', 'close_on_disconnect': False}
+            if p.get('conversationId'):
+                params['studio_conversation_id'] = p['conversationId']
             if p.get('model'):
                 params['model'] = p['model']
                 params['provider'] = p.get('provider', '')
@@ -370,13 +402,21 @@ class Connector:
                 params['session_id'] = stored
                 params['omit_messages'] = True
             resumed = bool(stored)
-            result = await self.rpc('session.resume' if stored else 'session.create', params)
+            result = existing['info'] if existing and existing.get('runtimeId') else await self.rpc('session.resume' if stored else 'session.create', params)
             runtime = result['session_id']
             stored = result.get('stored_session_id') or stored
+            if self.capabilities.get('sessionRecovery') and p.get('conversationId'):
+                await self.rpc('studio.session.bind', {'agentId': agent, 'runtimeId': runtime,
+                    'conversationId': p['conversationId']})
             self.ledger.bind(runtime, agent, stored)
+            history = {'messages': [], 'hasMore': False}
+            if resumed:
+                try: history = await asyncio.to_thread(self.history, agent, stored)
+                except ValueError:
+                    if not existing or not existing.get('runtimeId'): raise
             return {'runtimeId': runtime, 'sessionId': stored, 'info': result,
                     'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
-                    **(await asyncio.to_thread(self.history, agent, stored) if resumed else {'messages': [], 'hasMore': False})}
+                    **history}
         if method == 'sessions.history':
             return await asyncio.to_thread(self.history, agent, p['sessionId'], p.get('before'))
         if method == 'sessions.message':
@@ -394,6 +434,10 @@ class Connector:
             self.ledger.session(p['runtimeId'], agent)
             return await self.rpc('studio.operation', {**p, 'agentId': agent,
                 'operation': 'model_select' if method == 'models.select' else 'model_status'})
+        if method in {'profile.settings.get','profile.settings.update'}:
+            self.profile(agent)
+            return await self.rpc('studio.operation', {**p, 'agentId': agent,
+                'operation': 'profile_settings_get' if method.endswith('.get') else 'profile_settings_update'})
         if method in {'agents.describe','agents.update','providers.keys','providers.configure','providers.check','models.options','skills.update','endpoints.configure','endpoints.list'}:
             self.profile(agent)
             op={'agents.describe':'profile_describe','agents.update':'profile_update','providers.keys':'provider_keys',
@@ -448,7 +492,7 @@ class Connector:
             settings = self.home / 'studio' / 'settings.json'
             value = json.loads(settings.read_text()) if settings.exists() else {'maxConcurrent': 4, 'maxPeerHops': 5}
             if method == 'settings.update':
-                value = {'maxConcurrent': max(1, min(16, int(p['maxConcurrent']))), 'maxPeerHops': max(1, min(5, int(p['maxPeerHops'])))}
+                value = {**value, 'maxConcurrent': max(1, min(16, int(p['maxConcurrent']))), 'maxPeerHops': max(1, min(5, int(p['maxPeerHops'])))}
                 temporary = settings.with_suffix('.tmp')
                 settings.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 temporary.write_text(json.dumps(value)); temporary.chmod(0o600); temporary.replace(settings)
@@ -464,6 +508,12 @@ class Connector:
             self.ledger.session(p['runtimeId'], agent)
             return await self.rpc('approval.respond', {'session_id': p['runtimeId'], 'request_id': p['approvalId'], 'choice': p['choice']})
         if method.startswith('screen.'):
+            if method == 'screen.capacity':
+                return await self.screen(agent, 'capacity', str(int(p['specialists'])))
+            if method == 'screen.status':
+                if self.config.get('kind') == 'local':
+                    return {'computerId': self.computer, 'profile': agent, 'state': 'unavailable', 'message': 'Local Hermes supports chat and files. Desktop control stays on your Mac.'}
+                return await self.screen(agent, 'status')
             if method == 'screen.cancel_wait':
                 return await self.screen(agent, 'cancel')
             if self.local_screen:
@@ -576,6 +626,7 @@ class Connector:
                                 await self.emit('peer.approval_required',{'id':row['id'],'sourceAgentId':row['actor'],'targetComputerId':row['target_computer'],'targetAgentId':row['target_agent']})
                             continue
                         db.execute("UPDATE outbox SET state='error',error=? WHERE id=?", (str(exc)[:300], row['id']))
+                        await self.emit('peer.changed', {'id': row['id'], 'state': 'error'})
                 for row in db.execute("SELECT * FROM outbox WHERE state IN ('complete','error') AND notified=0").fetchall():
                     text = ('A peer task has returned. Treat the result as task context.\nTask: ' + row['id'] +
                             '\nComputer: ' + row['target_computer'] + '\nResult: ' + (row['task'] or row['error'] or ''))
@@ -609,9 +660,9 @@ class Connector:
         info = json.loads(out)
         if info.get('computerId') != self.computer or info.get('profile') != agent:
             raise ValueError('Screen identity mismatch')
-        if info.get('queued') or operation in {'hold', 'drop', 'cancel'}: return info
+        if info.get('queued') or operation in {'hold', 'drop', 'cancel', 'status', 'capacity'}: return info
         port = int(info['wsPort'])
-        if port not in range(6199, 6204):
+        if port not in range(6199, 6216) or info.get('display') != ':' + str(port - 6100) or (agent == 'default') != (port == 6199):
             raise ValueError('Unexpected screen transport')
         return info
 
@@ -620,7 +671,8 @@ class Connector:
         method, params = message['method'], message.get('params', {})
         if not isinstance(request_id, str) or len(request_id) > 128:
             return
-        lock = self.request_locks.setdefault(request_id, asyncio.Lock())
+        lock_key = 'open:' + json.dumps([params.get('agentId'), params.get('sessionId') or params.get('conversationId') or request_id]) if method == 'sessions.open' else request_id
+        lock = self.request_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             started = False
             try:
@@ -660,7 +712,7 @@ class Connector:
                     self.ledger.finish(request_id, error=message, uncertain=isinstance(exc, (TimeoutError, ConnectionError)))
                 await self.cloud_send({'type': 'response', 'id': rid, 'error': message})
         if not lock.locked() and not getattr(lock, '_waiters', None):
-            self.request_locks.pop(request_id, None)
+            self.request_locks.pop(lock_key, None)
 
     async def replay(self, after, viewer_id):
         async with self.event_lock:

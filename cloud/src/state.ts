@@ -26,6 +26,11 @@ export type Space = {
   conversations: Record<string, Conversation>
   selected: Record<string, string>
   online: boolean
+  connectorOnline?: boolean
+  healthCursor?: number
+  runtimeVersion?: string
+  runtimeEpoch?: string
+  peerRevision?: number
   capabilities: Record<string, boolean>
   error: string
   seq: number
@@ -64,18 +69,31 @@ export function blankSpace(): Space {
     approvals: []
   }
 }
+export function runtimeHealth(space: Space, status: { eventCursor?: number; epoch?: string; runtimeConnected: boolean }): Space {
+  if ((status.eventCursor ?? 0) < (space.healthCursor || 0)) return space
+  const changed = status.epoch && space.runtimeEpoch && status.epoch !== space.runtimeEpoch
+  return { ...space, online: status.runtimeConnected, healthCursor: status.eventCursor || space.healthCursor,
+    runtimeEpoch: status.epoch || space.runtimeEpoch,
+    conversations: changed ? Object.fromEntries(Object.entries(space.conversations).map(([key, c]) =>
+      [key, { ...c, runtimeId: '', loading: false }])) : space.conversations }
+}
 export function reduceEvent(space: Space, event: any): Space {
   if (!Number.isSafeInteger(event.seq) || event.seq <= space.seq) return space
   const next = { ...space, seq: event.seq }
+  // Replayed transport events describe the past, not the currently probed runtime.
+  if (event.kind.startsWith('runtime.') && (event.replay || event.seq <= (space.healthCursor || 0))) return next
   if (event.kind === 'runtime.disconnected')
     return {
       ...next,
+      healthCursor: event.seq,
       online: false,
       conversations: Object.fromEntries(
         Object.entries(space.conversations).map(([key, c]) => [key, { ...c, runtimeId: '', loading: false }])
       )
     }
-  if (event.kind === 'runtime.connected') return { ...next, online: true }
+  if (event.kind === 'runtime.connected') return runtimeHealth(next, { runtimeConnected: true, eventCursor: event.seq, epoch: event.payload?.epoch })
+  if (event.kind === 'peer.changed' || event.kind === 'peer.approval_required')
+    return { ...next, peerRevision: event.seq }
   if (event.kind === 'studio.task') {
     const task = event.payload
     const conversations = Object.fromEntries(
@@ -113,6 +131,8 @@ export function reduceEvent(space: Space, event: any): Space {
   if (event.seq <= c.afterSeq) return next
   let updated = { ...c }
   const p = event.payload || {}
+  if (event.kind === 'session.reclaimed')
+    return { ...next, conversations: { ...space.conversations, [key]: { ...c, runtimeId: '', loading: false } } }
   if (event.kind === 'message.delta') updated = { ...updated, running: true, stream: updated.stream + (p.text || '') }
   if (event.kind === 'message.complete') {
     const content = p.text || updated.stream

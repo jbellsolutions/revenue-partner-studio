@@ -16,6 +16,16 @@ Review the new release notes and checks. Fetch the public release into a clean i
 
 Do not blindly merge Hermes upstream. Pin the reviewed runtime and preserve provider isolation and custom coordination. Internal IDs and paths intentionally keep historical names; changing them can create a second installation. Older applications remain rollback clients until acceptance passes.
 
+## Repair an existing Studio extension
+
+Use `distribution/update-extension.py --config <existing-private-connector-config> --source <reviewed-release-directory> --check` with that installation’s Hermes Python. Then use the same arguments with `--apply` after the check reports no accepted work. This updater verifies the saved computer identity and exact Mac service ownership, stops only the Studio connector, rechecks work before stopping its runtime, and backs up source and consistent Studio databases. It does not replace native Hermes, homes, profiles or provider credentials.
+
+The updater checks the authenticated runtime’s capabilities before reopening cloud work. A failed startup restores the prior extension and service configuration. Backups are retained beside the private connector configuration under `extension-backups/`; keep them private. Mac services use the interactive process class because they serve immediate browser requests. Native source, application identifiers, ports and service labels remain the same.
+
+Check `status` for separate connector/runtime readiness and extension versions. `screen.status` is read-only: it neither allocates a screen nor renews a lease. An unverified live process is preserved for ownership reconciliation. The Advanced screen count starts with the existing four-specialist baseline. Higher counts require a host-specific qualification record and measured resource headroom; a setting alone does not prove capacity. Lowering a limit preserves occupied assignments.
+
+A repair download is marked connected only when its specific installation job reports a ready runtime. An already-connected older companion cannot complete that repair flow. Low local disk space still blocks imports and durable writes; diagnostic-file failures alone do not close a working transport.
+
 ## Restore and prove it
 
 Restore a backup into an isolated recovery environment first. Use the matching gateway database plus encryption key and the exact saved runtime version. Avoid two active gateways/connector owners for the same computer: keep recovery connectors offline until the original is quiesced and the owner approves cutover. Validate SQLite integrity, verify known profile/history records and credential decryptability without printing secrets, then test one harmless task and its assigned screen. Record what was restored and verified.

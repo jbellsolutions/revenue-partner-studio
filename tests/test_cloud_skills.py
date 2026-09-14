@@ -6,6 +6,13 @@ from studio.cloud_skills import build, preview
 from studio.cloud_import import apply_bundle, digest
 from studio.cloud_library import Library
 
+@pytest.fixture(autouse=True)
+def available_import_storage(monkeypatch):
+    # Exercise archive logic independently of unrelated host disk pressure.
+    from types import SimpleNamespace
+    monkeypatch.setattr("studio.cloud_archive.shutil.disk_usage", lambda _: SimpleNamespace(free=8 * 1024**3))
+
+
 COMPUTER='10000000-0000-4000-8000-000000000001'
 SCOPE={'sourceProfile':'default','skillIds':['writing/email'],'targetAgent':'email'}
 
