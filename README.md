@@ -51,6 +51,8 @@ The Orgo link is an affiliate link; no particular discount is promised. As check
 
 **v0.2.0-beta.1** is a private-workspace beta, not a shared multi-tenant SaaS. The existing connected workflow has backend acceptance evidence; an independent recipient installation and complete browser acceptance remain separate release checks. Mac chat and approved files are supported; Mac desktop control is hidden. There is no notarized public Mac binary in this release. Runtime entitlement depends on the selected provider.
 
+The custom domain is awaiting DNS activation. A [Cloudflare preview](https://revenue-partner-studio.pages.dev) is deployed, but anonymous access verification remains incomplete. The installation instructions and preparation files are available directly in this repository.
+
 Read [supported features and release checks](docs/RELEASE-CHECKS.md) before client rollout. Model-speed work is outside this release.
 
 ## Documentation

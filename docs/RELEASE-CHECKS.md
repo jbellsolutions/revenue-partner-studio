@@ -11,11 +11,11 @@ Private browser workspace; existing Orgo Linux computers, starting with 8 GB; na
 | Check | Current status |
 | --- | --- |
 | Existing connected private workflow | Prior backend acceptance includes real tool tasks, profile-scoped model changes, handoff/grant checks and four separate managed screens. Private records are excluded from this repository. |
-| Public release source, branding and installer | Local checks passed; hosted CI awaits publication. Exact local results are recorded below. |
+| Public release source, branding and installer | Local checks and [hosted verification](https://github.com/jbellsolutions/revenue-partner-studio/actions/runs/34809435709) passed. Exact results are recorded below. |
 | Independent recipient installation | **Not yet verified.** Requires its own authorized accounts/resources, provider authentication, real chat/tools and screen/reopen checks. A preflight or mocked adapter does not satisfy this gate. |
 | Browser visual acceptance | **Unverified while administrator-policy verification is unavailable.** This affects live appearance, mobile interaction, keyboard navigation and visible takeover acceptance. No bypass is permitted. |
-| 24-hour backend reliability trial | An existing trial is in progress. At the September 14 review, 1.34 hours had elapsed: all 480 samples each of status, agent listing and task listing succeeded, and 3 real tool tasks were verified. This is not a completed 24-hour result. |
-| Public anonymous access, DNS and HTTPS | Cloudflare Pages deployed the sample site. Domain activation is pending DNS administration access; anonymous access checks are not yet complete. |
+| 24-hour backend reliability trial | An existing trial is in progress. At the September 14 review, 1.64 hours had elapsed: all 591 samples each of status, agent listing and task listing succeeded, and 3 real tool tasks were verified. This is not a completed 24-hour result. |
+| Public anonymous access, DNS and HTTPS | Cloudflare Pages reports a successful production deployment of the sample site. Domain activation is pending DNS administration access. Anonymous HTTP verification received Cloudflare error 1010; anonymous access and downloads remain unverified. |
 
 ## Performance and reliability targets
 
@@ -32,6 +32,8 @@ Local checks on September 14, 2026:
 - Public demo: 5 automated fixture/static checks passed; production build passed. These are not browser interaction or visual tests.
 - Desktop branding, policy and connections: 137 tests passed across 18 files; typecheck and local Bot package build passed. Signature verification passed and the original application identifier is retained. No app was installed or replaced as part of this check.
 - Preparation Word guide: rendered and visually checked across both pages. No clipping or overlap found.
-- Fresh source scan: 819 findings match previously reviewed exact baseline lines (synthetic fixtures/examples, public OAuth client IDs, C macros and checksums); no new unreviewed finding. Exceptions are bound to full file hashes. Package scans follow the final source archive.
+- Fresh source scan: 819 findings match previously reviewed exact baseline lines (synthetic fixtures/examples, public OAuth client IDs, C macros and checksums); no new unreviewed finding. Exceptions are bound to full file hashes. Extracted source and runtime packages also passed with no new findings. Final published downloads carry SHA-256 checksums.
 
-Remaining gates: independent recipient installation, hosted CI, anonymous website/download verification, custom-domain DNS/HTTPS activation, permitted browser acceptance, completed reliability review and restoration acceptance. Detailed private records, account identifiers and personal paths are excluded.
+Hosted verification passed on Linux, including clean cloud/site installs, TypeScript checks, builds, desktop policy/connection tests and runtime/provider/installer checks. The initial cloud lockfile failure was repaired and verified from a fresh install.
+
+Remaining gates: independent recipient installation, anonymous website/download verification, custom-domain DNS/HTTPS activation, permitted browser acceptance, completed reliability review and restoration acceptance. Detailed private records, account identifiers and personal paths are excluded.
