@@ -9,11 +9,20 @@ import os
 
 
 def explicit_screen_grant(config):
+    if not isinstance(config, dict): return False
     grants = (config.get('tools') or {}).get('enabled_toolsets')
     if grants is None: grants = (config.get('platform_toolsets') or {}).get('cli')
     if grants is None: grants = config.get('toolsets', [])
-    return ('orgo-screen' in grants and
+    return (isinstance(grants, list) and 'orgo-screen' in grants and
             'orgo-screen' not in ((config.get('agent') or {}).get('disabled_toolsets') or []))
+
+
+def profile_grant(path):
+    # Read only the literal permission fields. Do not resolve credentials or
+    # depend on configuration APIs that differ between native Hermes versions.
+    import yaml
+    if path.resolve() != path: raise ValueError('Linked profile configuration')
+    return explicit_screen_grant(yaml.safe_load(path.read_text()))
 
 
 def allows_managed_screen(tool_name):
@@ -30,12 +39,11 @@ def allows_managed_screen(tool_name):
         from gateway.session_context import get_session_env
         if get_session_env('HERMES_SESSION_SOURCE', '') != 'studio': return False
         from studio.service import current
-        from hermes_cli.config import read_user_config_raw
         service = current()
         actor = service.actor()  # Verified native session; never supplied tool arguments.
         home = service.home if actor == 'default' else service.home/'profiles'/actor
         if home.resolve() != home: return False
-        return explicit_screen_grant(read_user_config_raw(home/'config.yaml'))
+        return profile_grant(home/'config.yaml')
     except Exception:
         return False  # Missing context/configuration never expands worker permissions.
 
@@ -83,13 +91,12 @@ def patch_boundary(text):
 
 
 def boundary_updates(home):
-    from hermes_cli.config import read_user_config_raw
     changes = {}
     for profile in [home, *sorted((home/'profiles').glob('*'))]:
         plugin = profile/'plugins/agent-team/__init__.py'
         config = profile/'config.yaml'
         if not plugin.is_file() or not config.is_file(): continue
-        if not explicit_screen_grant(read_user_config_raw(config)): continue
+        if not profile_grant(config): continue
         if plugin.resolve() != plugin or config.resolve() != config:
             raise ValueError('Linked team files cannot be repaired')
         old = plugin.read_bytes()
