@@ -71,6 +71,25 @@ def test_runtime_readiness_failure_rolls_back_before_accepting_new_work(installa
     assert 'runtime' in ' '.join(calls[-2]) and 'bootstrap' in calls[-2]
 
 
+def test_owned_plugins_with_same_filename_have_distinct_backups_and_rollback(installation,monkeypatch):
+    m,source,target,home,cfg,task=installation
+    paths=[home/'profiles'/name/'__init__.py' for name in ['researcher','writer']]
+    changes={}
+    for i,path in enumerate(paths):
+        path.parent.mkdir(parents=True);path.write_bytes(str(i).encode())
+        changes[path]=(path.read_bytes(),b'updated')
+    m['update'].__globals__['launch_updates']=lambda *args: changes
+    monkeypatch.setattr(m['subprocess'],'run',lambda *a,**kw:SimpleNamespace(returncode=0))
+    def failed(cfg): raise RuntimeError('readiness failed')
+    m['update'].__globals__['verify_runtime']=failed
+    with pytest.raises(RuntimeError,match='readiness failed'):m['update'](cfg,source,True)
+    saved=next((cfg.parent/'extension-backups').glob('*/owned-files'))
+    manifest=json.loads((saved/'manifest.json').read_text())
+    for i,row in enumerate(manifest):
+        assert (saved/row['backup']).read_bytes()==str(i).encode()
+        assert Path(row['path']).read_bytes()==str(i).encode()
+
+
 def test_interactive_launch_update_requires_the_exact_studio_owner(tmp_path,monkeypatch):
     import plistlib
     m=runpy.run_path(str(Path(__file__).parents[1]/'distribution/update-extension.py'))
@@ -208,4 +227,6 @@ def test_orgo_migration_backs_up_owned_wrapper_and_rolls_back_config(installatio
     assert wrapper.read_text()=='new-wrapper' and wrapper.stat().st_mode & 0o777==0o700
     assert json.loads(cfg.read_text())['sourceDir']==str(target)
     assert (Path(result['backup'])/'connector-config.json').read_bytes()==old_config
-    assert (Path(result['backup'])/'screen-control').read_text()=='old-wrapper'
+    saved=Path(result['backup'])/'owned-files'
+    row=next(row for row in json.loads((saved/'manifest.json').read_text()) if row['path']==str(wrapper))
+    assert (saved/row['backup']).read_text()=='old-wrapper'

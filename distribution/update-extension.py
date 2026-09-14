@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import plistlib
+import runpy
 import shlex
 from pathlib import Path
 import sqlite3
@@ -128,6 +129,9 @@ def update(configuration, source, apply=False, setup_job=None):
         raise RuntimeError('Computer identity mismatch')
     files = payload(source.resolve(), target, kind)
     owned_files.update(launch_updates(configuration, target) if kind == 'local' else {})
+    team_compat = source/'studio/team_compat.py'
+    if kind != 'local' and team_compat.is_file():
+        owned_files.update(runpy.run_path(str(team_compat))['boundary_updates'](home))
     task_store = home/('studio/workspace.sqlite3' if kind == 'local' else 'studio-cloud/runtime/workspace.sqlite3')
     queued = pending(task_store)
     result = {'computerId': cfg['computerId'], 'files': len(files), 'pendingTasks': queued,
@@ -147,8 +151,12 @@ def update(configuration, source, apply=False, setup_job=None):
         if data is not None:
             p = backup/'source'/name;p.parent.mkdir(parents=True, exist_ok=True);p.write_bytes(data)
     modes = {path:path.stat().st_mode & 0o777 for path in owned_files}
-    for path, (original, _) in owned_files.items():
-        (backup/path.name).write_bytes(original)
+    owned_backup = backup/'owned-files'; owned_backup.mkdir()
+    for index, (path, (original, _)) in enumerate(owned_files.items()):
+        (owned_backup/str(index)).write_bytes(original)
+    (owned_backup/'manifest.json').write_text(json.dumps([
+        {'path':str(path),'backup':str(index),'mode':modes[path]}
+        for index, path in enumerate(owned_files)]))
     def control(action, name):
         if kind == 'local':
             label = 'com.jbellsolutions.grokish-studio.' + name
@@ -168,6 +176,9 @@ def update(configuration, source, apply=False, setup_job=None):
     try:
         control('stop', 'connector'); stopped.append('connector')
         if pending(task_store): raise RuntimeError('Work arrived while draining. Update deferred; nothing was replaced')
+        for path, (original, _) in owned_files.items():
+            if path.resolve() != path or path.read_bytes() != original:
+                raise RuntimeError('An installation file changed during preflight; update deferred')
         control('stop', 'runtime'); stopped.append('runtime')
         for dbpath in [task_store, Path(cfg['stateDir'])/'connector.sqlite']:
             with sqlite3.connect(dbpath.as_uri()+'?mode=ro', uri=True) as src, sqlite3.connect(backup/dbpath.name) as dest:

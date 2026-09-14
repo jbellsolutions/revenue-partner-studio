@@ -56,3 +56,43 @@ def test_reassigned_port_discards_old_browser_target_without_closing_it():
     assert stopped==['researcher']
     refresh_browser_binding(browser,'researcher',identity,identity)
     assert stopped==['researcher']
+
+
+@pytest.mark.parametrize('field',['isError','is_error'])
+@pytest.mark.parametrize('failed',[False,True])
+def test_mcp_result_versions_preserve_success_and_tool_errors(monkeypatch,field,failed):
+    from studio import service
+    from tools import mcp_tool
+    monkeypatch.setattr(service,'current',lambda:SimpleNamespace(actor=lambda:'assistant'))
+    async def call(name,arguments):
+        return SimpleNamespace(**{field:failed},content=[SimpleNamespace(text='actual tool result')])
+    monkeypatch.setattr(bridge,'_connections',{'assistant':SimpleNamespace(session=SimpleNamespace(call_tool=call))})
+    monkeypatch.setattr(bridge,'_locks',{})
+    monkeypatch.setattr(mcp_tool,'_run_on_mcp_loop',lambda work,timeout:asyncio.run(work()))
+    result=json.loads(bridge.call('browser_action',{'operation':'snapshot'}))
+    assert result=={'error' if failed else 'result':'actual tool result','screen_owner':'assistant'}
+
+
+def test_mcp2_alias_preserves_required_schema_and_native_serialization():
+    from pydantic import BaseModel, Field
+    from studio.mcp_compat import alias
+    from tools.mcp_tool import _convert_mcp_schema
+    class ToolV2(BaseModel):
+        name: str
+        description: str
+        input_schema: dict = Field(alias='inputSchema')
+    wire={'name':'browser_action','description':'Assigned browser','inputSchema':{
+        'type':'object','properties':{'operation':{'type':'string','enum':['snapshot','navigate']}},'required':['operation']}}
+    tool=ToolV2.model_validate(wire)
+    alias(ToolV2,'inputSchema','input_schema');alias(ToolV2,'inputSchema','input_schema')
+    assert _convert_mcp_schema('orgo-screen',tool)['parameters']==wire['inputSchema']
+    assert tool.model_dump(by_alias=True)==wire
+    assert getattr(tool,'inputSchema',None)==wire['inputSchema']
+
+
+def test_mcp1_fields_are_not_replaced():
+    from mcp.types import Tool
+    from studio.mcp_compat import alias
+    before=dict(Tool.model_fields)
+    alias(Tool,'inputSchema','input_schema')
+    assert Tool.model_fields==before

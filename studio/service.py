@@ -49,6 +49,7 @@ def screen_config(profile):
                    'HERMES_HOME':str(Path('/root/.hermes') if profile=='default' else Path('/root/.hermes/profiles')/profile),
                    'ORGO_DEFAULT_COMPUTER_ID':computer_id,
                    'BROWSER_BACKEND':'local',
+                   'STUDIO_SCREEN_SCHEMA_REVISION':'2',
                    'PATH':str(Path(__file__).resolve().parent.parent/'distribution/computer-tools/node_modules/.bin')+':/opt/hermes-orgo-studio/computer-tools/node_modules/.bin:/usr/local/bin:/usr/bin:/bin'}}
 
 
@@ -473,6 +474,8 @@ class Service:
 def register(server):
     global _service
     if os.getenv('HERMES_STUDIO_RUNTIME')!='1': return
+    from .mcp_compat import install as install_mcp_compat
+    install_mcp_compat()
     from hermes_constants import get_hermes_home
     _service=Service(server,get_hermes_home())
     from .cloud_permissions import install_guard

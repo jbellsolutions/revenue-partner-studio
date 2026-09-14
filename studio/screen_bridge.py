@@ -38,7 +38,11 @@ def call(tool_name: str, args: dict) -> str:
                 else:
                     rendered=mcp._cache_mcp_image_block(block)
                     if rendered: parts.append(rendered)
-            return json.dumps({'error' if result.isError else 'result':'\n'.join(parts), 'screen_owner':profile})
+            # MCP 1.x uses the wire alias; MCP 2.x exposes the Python field name.
+            if hasattr(result, 'is_error'): failed = result.is_error
+            elif hasattr(result, 'isError'): failed = result.isError
+            else: raise TypeError('Unsupported MCP tool-result error field')
+            return json.dumps({'error' if failed else 'result':'\n'.join(parts), 'screen_owner':profile})
     try:
         return mcp._run_on_mcp_loop(invoke, timeout=120)
     except InterruptedError:
