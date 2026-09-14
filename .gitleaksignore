@@ -1,0 +1,2 @@
+# Use distribution/scan-public.mjs for reviewed full-file-hash exceptions.
+# No historical private commit fingerprints are carried into this public snapshot.

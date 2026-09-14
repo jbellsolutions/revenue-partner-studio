@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "product": "Orgo AI Guy Bot",
+  "repository": "https://github.com/jbellsolutions/orgo-ai-guy-bot",
+  "supported_platforms": ["macos"],
+  "entrypoint": "install.sh",
+  "modes": ["--check", "--dry-run", "--yes"],
+  "install_location": "/Applications/Orgo AI Guy Bot.app (preferred; ~/Applications fallback)",
+  "preserved_state": [
+    "~/.hermes",
+    "~/Library/Application Support/Hermes Bots"
+  ],
+  "credentials_collected_by_installer": [],
+  "guided_first_run": [
+    "Orgo",
+    "Tailscale",
+    "model provider",
+    "first bot",
+    "optional connected apps"
+  ]
+}

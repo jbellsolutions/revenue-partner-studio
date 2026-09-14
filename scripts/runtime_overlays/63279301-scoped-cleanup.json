@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "base_revision": "63279301bcbdc185c1b07b98a9312eb0c862f26d",
+  "source_changes": [
+    "257d559",
+    "384e492",
+    "3f10fb5",
+    "5216da4",
+    "afe504195b673237c51ab94b4d37e9f8a54a4d92",
+    "49834440ffbc10c3ec8e867abe192e0a247b015c"
+  ],
+  "patch": "63279301-scoped-cleanup.patch",
+  "patch_sha256": "fde45f05e156b288f45c04853e602c1f507e2d77c3982b7e5727f38289f6e0f2",
+  "base_files": {
+    "hermes_cli/kanban.py": "b6bba15c847ec9ee34ac59dbe7d4cb03ac0329c3c3a8704fa06e0bfab4573dfa",
+    "hermes_cli/kanban_db.py": "1a80526f635bc240ef6584aea1b3f158ac4548602ed1bd56e020e2b549b2d6b7",
+    "tools/kanban_tools.py": "66c260fe94d660fe430d9a048d72f9200a48326f066390b536552cfc1deab89f",
+    "tui_gateway/server.py": "7e98a93354522498026619813329bf28ab76093b9abe89884eaa4c1e5605377d",
+    "tests/tui_gateway/test_kanban_notify_poller.py": "4c12e9b8414b078170f24012e083260e13334a96ff95f608c170016ad52aa07f",
+    "hermes_cli/dashboard_procs.py": "79b8466bba21f10b1ea7dcd6450f7ea4851d7d45c97b4c32f274e7f386f217c2",
+    "tests/hermes_cli/test_orphan_desktop_serve_reap.py": "62c23f741628557d08047c447bb9775befcfbdbcb48dc84b2b21c5d0e7fa0417",
+    "hermes_cli/gateway.py": "8fc1a762f86151861c1e5b02506f8c7f94c7237e6fdd3770078203df8a8b1f27",
+    "tests/hermes_cli/test_gateway.py": "9a6b7edb6d177252b63b389652f6de1b90c91b127f4e44df16ba2c49aac5a199"
+  },
+  "output_files": {
+    "hermes_cli/kanban.py": "c8caea18a4ee5aaf79a0cac21cda01964fe2796f482a53ec23c81220e43c414a",
+    "hermes_cli/kanban_db.py": "905190be4adc26a30b144a947f4eaa451506152db78258066113628b652d998a",
+    "tools/kanban_tools.py": "3823fa4a24ad81395c486435e3e09dab29f06f82fceecd0a99e7ed8aaea5813b",
+    "tui_gateway/server.py": "c7ceb1f87990c23b2550ce28a3022681c27a42d7b9f3a271890e78bfc18d30ad",
+    "tests/tui_gateway/test_kanban_notify_poller.py": "6375b6cfb089cf89284f3f848c3811430c4c88cfbdece5430f97768893137987",
+    "hermes_cli/dashboard_procs.py": "4de3b66ebcc38685c25925ef739fc4a42bf807b9a17227aebf7b90cb20e93046",
+    "tests/hermes_cli/test_orphan_desktop_serve_reap.py": "6c84b58febb04ed46babf068e4b8db3c44cd3407c97a042d9524e7bc4868f9d4",
+    "hermes_cli/gateway.py": "8ba26aab083f9e598e8d52721a239b2de1262ce2018a3eab6506bbb03c437a1f",
+    "tests/hermes_cli/test_gateway.py": "d938ad247f7a13a28e8c862fda92511bf84afd6af9a2a49e42853fc79cd7c15a",
+    "tui_gateway/notification_inbox.py": "c3126506df615c5169cfa5d9f5a27975e6941849850af664fd31e75d23528bb7",
+    "tests/hermes_cli/test_kanban_create_return_route.py": "32849ba36cb17f3f7215d396894696cd3fd2bbe544cd146dcac67c2720d2d422",
+    "tests/tui_gateway/test_notification_inbox.py": "8af4034791e4406b8b8eeae7c1dc488786bde30e34ac6b35e0e994bb6dcb99be",
+    "tests/tui_gateway/test_orgo_task_result_turn.py": "618d0c8c6cd0bbec7fe8a8639552c670ba4d868d937e90a10c92bd35295ba4ee",
+    "tests/hermes_cli/test_desktop_serve_home_isolation.py": "e82461430a380d26433c09c5fd5a60531f02db579890c0331b3ddcec051cdcd8",
+    "tests/hermes_cli/test_gateway_home_isolation.py": "5c7a8c8cdea14dc1ac3b55a60f497467af3388e5311afee3821968602b42e3cd",
+    "pyproject.toml": "b66524fe2da8c3014f28f34de89779ba0797650fb562752749b1d4986bb5ae6d",
+    "uv.lock": "6393f09ee88cc5683f0e563306f96b5c068f901a8baa60f7209f302c1ac602d9"
+  },
+  "new_files": [
+    "tui_gateway/notification_inbox.py",
+    "tests/hermes_cli/test_kanban_create_return_route.py",
+    "tests/tui_gateway/test_notification_inbox.py",
+    "tests/tui_gateway/test_orgo_task_result_turn.py",
+    "tests/hermes_cli/test_desktop_serve_home_isolation.py",
+    "tests/hermes_cli/test_gateway_home_isolation.py"
+  ]
+}

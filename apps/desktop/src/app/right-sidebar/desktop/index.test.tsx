@@ -1,0 +1,331 @@
+import { readFileSync } from 'node:fs'
+
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { DesktopOrgoSessionResult } from '@/global'
+import { $activeGatewayProfile } from '@/store/profile'
+
+import { requestOrgoDesktopSettings, setOrgoDesktopOpen } from '../store'
+
+const { MockRfb, rfbInstances } = vi.hoisted(() => {
+  const instances: Array<{
+    clipViewport: boolean
+    compressionLevel: number
+    credentials: { password?: string } | undefined
+    disconnect: ReturnType<typeof vi.fn>
+    dispatchEvent: (event: Event) => boolean
+    focus: ReturnType<typeof vi.fn>
+    qualityLevel: number
+    resizeSession: boolean
+    scaleViewport: boolean
+    url: string
+    viewOnly: boolean
+  }> = []
+
+  class Rfb extends EventTarget {
+    clipViewport = false
+    compressionLevel = 0
+    qualityLevel = 0
+    resizeSession = true
+    scaleViewport = false
+    viewOnly = false
+    disconnected = false
+    credentials: { password?: string } | undefined
+    target: HTMLElement
+    url: string
+
+    constructor(target: HTMLElement, url: string, options?: { credentials?: { password?: string } }) {
+      super()
+      this.target = target
+      this.url = url
+      this.credentials = options?.credentials
+      instances.push(this)
+    }
+
+    clipboardPasteFrom = vi.fn()
+    focus = vi.fn()
+    sendCredentials = vi.fn()
+    disconnect = vi.fn(() => {
+      this.disconnected = true
+    })
+  }
+
+  return { MockRfb: Rfb, rfbInstances: instances }
+})
+
+vi.mock('@novnc/novnc', () => ({ default: MockRfb }))
+
+import { OrgoDesktopPane } from './index'
+
+const SESSION: DesktopOrgoSessionResult = {
+  ok: true,
+  computerId: 'ef2f6e29-3864-494b-a82c-15280c5d9f9e',
+  computerName: 'Dewey',
+  instanceId: '8b517302',
+  status: 'running',
+  websocketUrl: 'wss://www.orgo.ai/desktops/8b517302/ws/websockify?token=temporary',
+  password: 'temporary'
+}
+
+describe('OrgoDesktopPane', () => {
+  beforeEach(() => {
+    rfbInstances.length = 0
+    $activeGatewayProfile.set('default')
+    setOrgoDesktopOpen(true)
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      }
+    )
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        api: vi.fn().mockResolvedValue([]),
+        getConnectionConfig: vi.fn().mockResolvedValue({ mode: 'ssh', profile: null }),
+        orgoDesktop: {
+          getConfig: vi.fn().mockResolvedValue({
+            configured: true,
+            computerId: SESSION.ok ? SESSION.computerId : '',
+            apiKeySet: true,
+            inheritedFromDefault: false,
+            profile: 'default'
+          }),
+          getSession: vi.fn().mockResolvedValue(SESSION),
+          saveConfig: vi.fn(),
+          clearConfig: vi.fn()
+        },
+        writeClipboard: vi.fn().mockResolvedValue(true)
+      }
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    setOrgoDesktopOpen(false)
+    $activeGatewayProfile.set('default')
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+  })
+
+  it.each(['bot', 'hermes'])('explains the %s computer and credential scope in settings', async product => {
+    vi.stubEnv('VITE_HERMES_DESKTOP_PRODUCT', product)
+    render(<OrgoDesktopPane />)
+    await waitFor(() => expect(rfbInstances).toHaveLength(1))
+    act(() => requestOrgoDesktopSettings())
+
+    if (product === 'bot') {
+      expect(screen.getByText(/This app instance connects to one Orgo computer/)).toBeTruthy()
+      expect(screen.getByText(/encrypted for this instance/)).toBeTruthy()
+      expect(screen.queryByText(/Configure an agent only when it needs a different computer/)).toBeNull()
+      expect(screen.queryByText(/operating system's credential store/)).toBeNull()
+    } else {
+      expect(screen.getByText(/Configure an agent only when it needs a different computer/)).toBeTruthy()
+      expect(screen.queryByText(/This app instance connects to one Orgo computer/)).toBeNull()
+    }
+  })
+
+  it('connects through noVNC with fresh credentials and preserves the remote screen until unmount', async () => {
+    const view = render(<OrgoDesktopPane />)
+
+    await waitFor(() => expect(rfbInstances).toHaveLength(1))
+    const rfb = rfbInstances[0]
+
+    expect(rfb.url).toBe('wss://www.orgo.ai/desktops/8b517302/ws/websockify?token=temporary')
+    expect(rfb.credentials).toEqual({ password: 'temporary' })
+    expect(rfb.scaleViewport).toBe(true)
+    // Clipping is deliberately OFF: with it on, noVNC cropped the remote
+    // screen to fill the rail's frame and cut off the desktop's top and
+    // bottom. Scaling without clipping letterboxes the whole screen instead.
+    expect(rfb.clipViewport).toBe(false)
+    expect(rfb.resizeSession).toBe(false)
+    expect(rfb.qualityLevel).toBe(7)
+    expect(rfb.compressionLevel).toBe(2)
+    // Interactive from the first connect: requiring a toggle before you could
+    // click the machine made the common case a two-step. The toggle remains
+    // for pinning a session read-only.
+    expect(rfb.viewOnly).toBe(false)
+
+    act(() => rfb.dispatchEvent(new Event('connect')))
+    expect(await screen.findByText("Dewey's screen")).toBeTruthy()
+    // The preview is interactive from the first connect, so a pointer down
+    // hands keyboard focus to the machine rather than being swallowed.
+    fireEvent.pointerDown(screen.getByLabelText('Orgo computer screen'))
+    expect(rfb.focus).toHaveBeenCalled()
+
+    // Configuration is reached from the titlebar gear now — the pane no longer
+    // carries a second cog of its own — so the request arrives through the
+    // store rather than a button inside the pane.
+    act(() => requestOrgoDesktopSettings())
+    expect(screen.getByText('Computer')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to details' }))
+    expect(rfbInstances).toHaveLength(1)
+
+    fireEvent.click(screen.getByLabelText('Open computer fullscreen', { selector: 'button' }))
+    const exit = screen.getByRole('button', { name: 'Exit fullscreen' })
+    expect(exit).toBeTruthy()
+    // Light mode paints ghost buttons with dark theme tokens; the overlay
+    // chrome is always black, so these must force light-on-dark icons.
+    expect(exit.className).toMatch(/text-white/)
+    expect(screen.getByRole('button', { name: /Paste clipboard/i }).className).toMatch(/text-white/)
+    expect(rfbInstances).toHaveLength(1)
+
+    view.unmount()
+    expect(rfb.disconnect).toHaveBeenCalled()
+  })
+
+  it('crops the panel bar by geometry, not by object-fit', () => {
+    // noVNC nests its canvas inside its own screen div, so the `[&>canvas]`
+    // object-fit rules this component used to carry never matched anything.
+    // The crop has to come from the element geometry: the screen host is
+    // anchored to the bottom and stands taller than its frame, so the frame's
+    // overflow takes the desktop's panel bar off the top.
+    render(<OrgoDesktopPane />)
+
+    const surface = screen.getByLabelText('Orgo computer screen')
+
+    expect(surface.className).toContain('bottom-0')
+    expect(surface.className).toContain('overflow-hidden')
+    expect(surface.className).not.toContain('object-cover')
+  })
+
+  it('trims the panel bar by pixels, so a taller screen is not over-cropped', () => {
+    // The bar is a fixed 26px of XFCE chrome. Expressed as a percentage it
+    // looked right at 1280x720 and started eating window content the moment
+    // the machine moved to 1280x800 — Chrome's tab strip lost its top edge.
+    const source = readFileSync('src/app/right-sidebar/desktop/index.tsx', 'utf8')
+
+    expect(source).toContain('SCREEN_PANEL_PX')
+    expect(source).toMatch(/SCREEN_PANEL_PX \/ screenSize\.height/)
+    expect(source).not.toContain('SCREEN_TOP_CROP')
+  })
+
+  it('starts the computer preview near the top instead of reserving an empty header', () => {
+    const source = readFileSync('src/app/right-sidebar/desktop/index.tsx', 'utf8')
+    const details = source.match(/aria-hidden=\{view !== 'details'\}[\s\S]*?<AgentRoutines/)
+
+    expect(details).not.toBeNull()
+    expect(details?.[0]).not.toContain('<RailHeader />')
+    expect(details?.[0]).toContain('<section className="shrink-0 px-2.5 pt-2">')
+  })
+
+  it('reshapes the frame when the remote machine changes resolution', async () => {
+    // Sampling the framebuffer once at connect stranded the frame at the old
+    // aspect when the box was re-resolutioned underneath it (xrandr on the
+    // remote machine), letterboxing a screen that had just become taller.
+    render(<OrgoDesktopPane />)
+
+    const surface = await screen.findByLabelText('Orgo computer screen')
+
+    expect(surface).toBeTruthy()
+    // The observer is wired to the screen host, so a canvas swap or a
+    // width/height attribute change re-measures rather than going stale.
+    expect(typeof MutationObserver).toBe('function')
+  })
+
+  it('sizes the frame from the remote screen aspect so no side is letterboxed', async () => {
+    // A hardcoded 16:10 frame letterboxed every machine whose screen was not
+    // 16:10 — correct, but it reads as a broken crop next to a panel whose
+    // frame matches its screen. The canvas noVNC creates is the source of
+    // truth for the remote resolution.
+    const view = render(<OrgoDesktopPane />)
+
+    await screen.findByLabelText('Orgo computer screen')
+
+    const slot = view.container.querySelector('[style*="aspect-ratio"]')
+
+    expect(slot).not.toBeNull()
+  })
+
+  it('shows recoverable setup when no Orgo desktop is configured', async () => {
+    vi.mocked(window.hermesDesktop.orgoDesktop.getConfig).mockResolvedValue({
+      configured: false,
+      computerId: '',
+      apiKeySet: false,
+      inheritedFromDefault: false,
+      profile: 'default'
+    })
+    vi.mocked(window.hermesDesktop.orgoDesktop.saveConfig).mockResolvedValue({
+      configured: true,
+      computerId: 'ef2f6e29-3864-494b-a82c-15280c5d9f9e',
+      apiKeySet: true,
+      inheritedFromDefault: false,
+      profile: 'default'
+    })
+
+    render(<OrgoDesktopPane />)
+
+    expect(await screen.findByText('Computer')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Orgo computer ID'), {
+      target: { value: 'ef2f6e29-3864-494b-a82c-15280c5d9f9e' }
+    })
+    expect(screen.getByRole('button', { name: 'Save and connect' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.change(screen.getByLabelText('Orgo API key'), { target: { value: 'orgo-key' } })
+    expect(screen.getByRole('button', { name: 'Save and connect' }).hasAttribute('disabled')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Save and connect' }))
+
+    await waitFor(() =>
+      expect(window.hermesDesktop.orgoDesktop.saveConfig).toHaveBeenCalledWith({
+        apiKey: 'orgo-key',
+        computerId: 'ef2f6e29-3864-494b-a82c-15280c5d9f9e',
+        profile: 'default'
+      })
+    )
+  })
+
+  it('keeps the existing computer pinned while accepting a replacement key', async () => {
+    const pinnedComputerId = SESSION.ok ? SESSION.computerId : ''
+
+    vi.mocked(window.hermesDesktop.orgoDesktop.getConfig).mockResolvedValue({
+      configured: false,
+      computerId: pinnedComputerId,
+      apiKeySet: false,
+      inheritedFromDefault: false,
+      profile: 'default'
+    })
+    vi.mocked(window.hermesDesktop.orgoDesktop.saveConfig).mockResolvedValue({
+      configured: true,
+      computerId: pinnedComputerId,
+      apiKeySet: true,
+      inheritedFromDefault: false,
+      profile: 'default'
+    })
+
+    render(<OrgoDesktopPane />)
+
+    const computerId = await screen.findByLabelText('Orgo computer ID')
+    expect(computerId.getAttribute('disabled')).not.toBeNull()
+    expect((computerId as HTMLInputElement).value).toBe(pinnedComputerId)
+
+    fireEvent.change(screen.getByLabelText('Orgo API key'), { target: { value: 'replacement-key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save and connect' }))
+
+    await waitFor(() =>
+      expect(window.hermesDesktop.orgoDesktop.saveConfig).toHaveBeenCalledWith({
+        apiKey: 'replacement-key',
+        computerId: pinnedComputerId,
+        profile: 'default'
+      })
+    )
+  })
+
+  it('connects a new agent through the inherited default desktop binding', async () => {
+    $activeGatewayProfile.set('inbox-triage')
+    vi.mocked(window.hermesDesktop.orgoDesktop.getConfig).mockResolvedValue({
+      configured: true,
+      computerId: 'ef2f6e29-3864-494b-a82c-15280c5d9f9e',
+      apiKeySet: true,
+      inheritedFromDefault: true,
+      profile: 'inbox-triage'
+    })
+
+    render(<OrgoDesktopPane />)
+
+    await waitFor(() => expect(rfbInstances).toHaveLength(1))
+    expect(window.hermesDesktop.orgoDesktop.getSession).toHaveBeenCalledWith('inbox-triage')
+    expect(screen.queryByText('Connect an Orgo computer')).toBeNull()
+  })
+})

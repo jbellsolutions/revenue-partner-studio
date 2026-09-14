@@ -1,0 +1,105 @@
+name: '🔧 Setup / Installation Help'
+description: Having trouble installing or configuring Korgo Bot? Ask here.
+title: '[Setup]: '
+labels: ['setup']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sorry you're having trouble! Please fill out the details below so we can help.
+
+        **Quick checks first:**
+        - Run `./scripts/setup-hermes-bots.sh --verify` from the repository root
+        - Record `git rev-parse --short HEAD`, `node --version`, `npm --version`, and `uv --version`
+        - Check the [README](https://github.com/nickvasilescu/hermes-bots#readme) and [support guide](https://github.com/nickvasilescu/hermes-bots/blob/main/SUPPORT.md)
+        - Remove API keys, OAuth codes, cookies, SSH keys, and other credentials from all output
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What's Going Wrong?
+      description: Describe what you're trying to do and where it fails.
+      placeholder: |
+        I ran the Korgo Bot source setup and opened the app, but the Orgo
+        connection step fails after...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps Taken
+      description: What did you do? Include the exact commands you ran.
+      placeholder: |
+        1. Cloned the repository
+        2. Ran `./scripts/setup-hermes-bots.sh --verify --run`
+        3. Entered the Orgo setup flow
+        4. Received the error...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation Method
+      options:
+        - Korgo Bot source setup script
+        - Install script (curl | bash)
+        - Manual clone + pip/uv install
+        - PowerShell installer (Windows)
+        - Docker
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: Ubuntu 24.04 / macOS 15.2 / Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: Output of `python --version` (or `python3 --version`)
+      placeholder: '3.11.9'
+
+  - type: input
+    id: hermes-version
+    attributes:
+      label: Hermes Version
+      description: Output of `hermes version` (if install got that far)
+      placeholder: '2.1.0'
+
+  - type: textarea
+    id: debug-report
+    attributes:
+      label: Debug Report
+      description: |
+        Run `hermes debug share --local`, inspect the local output, remove credentials and private data, then paste only the relevant section.
+        If that command is unavailable, run `hermes doctor` and apply the same review before posting.
+      placeholder: |
+        Redacted local diagnostics...
+      render: shell
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Full Error Output
+      description: Paste the complete error message or traceback. This will be auto-formatted.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've Already Tried
+      description: List any fixes or workarounds you've already attempted.
+      placeholder: |
+        - Reran `./scripts/setup-hermes-bots.sh --verify`
+        - Confirmed Tailscale is connected
+        - Restarted the Orgo computer

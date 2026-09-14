@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PRODUCT="Orgo AI Guy Bot"
+SYSTEM_APP="/Applications/$PRODUCT.app"
+USER_APP="$HOME/Applications/$PRODUCT.app"
+
+usage() {
+  printf '%s\n' \
+    "Launch one isolated Orgo AI Guy Bot instance per Orgo computer." \
+    "" \
+    "Usage: orgo-ai-guy-bot [INSTANCE]" \
+    "" \
+    "Examples:" \
+    "  orgo-ai-guy-bot             Open the existing/default instance" \
+    "  orgo-ai-guy-bot research    Open the isolated 'research' instance" \
+    "  orgo-ai-guy-bot sales       Open the isolated 'sales' instance"
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+if (($# > 1)); then
+  usage >&2
+  exit 2
+fi
+
+if [[ -n "${ORGO_AI_GUY_BOT_APP:-}" ]]; then
+  APP="$ORGO_AI_GUY_BOT_APP"
+elif [[ -d "$SYSTEM_APP" ]]; then
+  APP="$SYSTEM_APP"
+else
+  APP="$USER_APP"
+fi
+
+if [[ ! -d "$APP" ]]; then
+  printf '%s is not installed at %s.\n' "$PRODUCT" "$APP" >&2
+  exit 3
+fi
+
+instance="${1:-}"
+if [[ -z "$instance" ]]; then
+  # A named instance may already be running under this same bundle ID.
+  # Let Electron's default-userData lock choose the default window.
+  exec /usr/bin/open -na "$APP"
+fi
+
+if [[ ! "$instance" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
+  printf 'Instance names must use 1-64 lowercase letters, numbers, dashes, or underscores.\n' >&2
+  exit 2
+fi
+
+# -n asks LaunchServices for another application process. Electron's own lock
+# then deduplicates launches with the same isolated userData directory.
+exec /usr/bin/open -na "$APP" --args "--orgo-instance=$instance"

@@ -1,0 +1,545 @@
+{
+  "description": "Reviewed inherited synthetic credentials, documentation examples and image identifiers, public OAuth client IDs, C macros and file checksums. Exceptions bind to the entire file content; any file edit requires renewed review.",
+  "entries": [
+    {
+      "file": "agent/anthropic_adapter.py",
+      "rule": "generic-api-key",
+      "fileHash": "01ba3ddc84c59d897be884c7050a8dd8efbef8dd167f3fe8051397d88ddf2e6b"
+    },
+    {
+      "file": "agent/redact.py",
+      "rule": "private-key",
+      "fileHash": "e1d1e6b4a1b1363b593d3741f13c2dc380493d1c0c62f4ce172343f51ad3f52f"
+    },
+    {
+      "file": "apps/desktop/electron/native-token-store.test.ts",
+      "rule": "generic-api-key",
+      "fileHash": "a1f71acf9fe91c5c48c4a9375ec9623acad51fc352ef9ef92b5c6db139e34c45"
+    },
+    {
+      "file": "hermes_cli/copilot_auth.py",
+      "rule": "generic-api-key",
+      "fileHash": "7d7dfdc6d77e366b9ce30ea2122ff06b5cbadad230f1ce8afa7bfb746d2d69c7"
+    },
+    {
+      "file": "hermes_cli/auth.py",
+      "rule": "generic-api-key",
+      "fileHash": "c158c8e8ec7a0e97c954d83de612bb1ae89a527108a26d8b667e4eb09b98ae60"
+    },
+    {
+      "file": "native/fts5_cjk/vendor/sqlite3ext.h",
+      "rule": "generic-api-key",
+      "fileHash": "9a91de0d5e5ccc04ec59041275c67972d6f8894f7543a10033e387b69987beb5"
+    },
+    {
+      "file": "optional-skills/productivity/telephony/scripts/telephony.py",
+      "rule": "generic-api-key",
+      "fileHash": "0c8d5b326a7c0ef7854388a71dc1e905fa819b5481f88f4bbf10c61e84eedf60"
+    },
+    {
+      "file": "scripts/runtime_overlays/63279301-autonomous-release.json",
+      "rule": "generic-api-key",
+      "fileHash": "3aaa6a9af72d16acb6feaa91cb5170a8ec925ce3e1fb28920c37f54fa04b20b9"
+    },
+    {
+      "file": "scripts/runtime_overlays/63279301-cancellation.json",
+      "rule": "generic-api-key",
+      "fileHash": "2097490d0175696db39c13004bb349b0709f1e061fbb203f19cd9a28c495bf11"
+    },
+    {
+      "file": "scripts/runtime_overlays/63279301-retry-bounds.json",
+      "rule": "generic-api-key",
+      "fileHash": "0722a3493389586d61b5676f46dfb3ab05eee2e78767374ece0db9f5643b6dfa"
+    },
+    {
+      "file": "scripts/toolperf_abeval/ab_eval.py",
+      "rule": "generic-api-key",
+      "fileHash": "683de4afafc5c03247fc2db06b704e0ca2c7e7d27a7721ae41d3c67c3f824e47"
+    },
+    {
+      "file": "tests/agent/test_anthropic_thinking_block_order.py",
+      "rule": "curl-auth-header",
+      "fileHash": "a5f3c06912f128606133ff6e524a2144819a8ae126ee629544f336591d309a7d"
+    },
+    {
+      "file": "tests/agent/test_copilot_acp_client.py",
+      "rule": "generic-api-key",
+      "fileHash": "f510e1d58b41f4c4645704f95c96964410d6da9b530e5b414153d455cb067cc7"
+    },
+    {
+      "file": "tests/agent/test_display.py",
+      "rule": "generic-api-key",
+      "fileHash": "1d9c68359dda62f83ee1f5d084fcc3a8ee5f5abe4502ef35f0e041978c2345c8"
+    },
+    {
+      "file": "tests/agent/test_trace_upload.py",
+      "rule": "generic-api-key",
+      "fileHash": "e22256d9e65160e7f4466e4f4c3a93d548f34821a758ac267c840e86eb148f2a"
+    },
+    {
+      "file": "tests/agent/test_redact.py",
+      "rule": "curl-auth-header",
+      "fileHash": "9692dc86b2423869ef829f900761d5b274c89cd25bd71a5d63c1192259524da5"
+    },
+    {
+      "file": "tests/agent/test_redact.py",
+      "rule": "github-pat",
+      "fileHash": "9692dc86b2423869ef829f900761d5b274c89cd25bd71a5d63c1192259524da5"
+    },
+    {
+      "file": "tests/agent/test_redact.py",
+      "rule": "generic-api-key",
+      "fileHash": "9692dc86b2423869ef829f900761d5b274c89cd25bd71a5d63c1192259524da5"
+    },
+    {
+      "file": "tests/agent/test_redact.py",
+      "rule": "gitlab-pat",
+      "fileHash": "9692dc86b2423869ef829f900761d5b274c89cd25bd71a5d63c1192259524da5"
+    },
+    {
+      "file": "tests/cli/test_quick_commands.py",
+      "rule": "generic-api-key",
+      "fileHash": "b356f1e0121846416bb83cc9228831b330bca9e24a11fa171edd98d793fa3b82"
+    },
+    {
+      "file": "tests/cli/test_focus_view.py",
+      "rule": "generic-api-key",
+      "fileHash": "c86a5954646724e1c85666c188c4d65c1aaedaa23bd111c526099babb2a19904"
+    },
+    {
+      "file": "tests/gateway/relay/test_auth.py",
+      "rule": "generic-api-key",
+      "fileHash": "10bb85a866d467504d5b25d7164a96e03d11ce5f7ea1bdd3c1cd763b25ec007d"
+    },
+    {
+      "file": "tests/gateway/test_api_server_bind_guard.py",
+      "rule": "generic-api-key",
+      "fileHash": "2a10b5839b5b913436efcb995831dce45beb214f6eef097c32d4116255311c54"
+    },
+    {
+      "file": "tests/gateway/test_agent_cache.py",
+      "rule": "generic-api-key",
+      "fileHash": "7609a86a4422f0ad69c03b3e9db00c7f5d78338f73d875b5290741d305c5b8ea"
+    },
+    {
+      "file": "tests/gateway/test_api_server.py",
+      "rule": "generic-api-key",
+      "fileHash": "c56a55110ee676cc59b09d2a4eda4558c77aad9896e349d3c110587260de4bc0"
+    },
+    {
+      "file": "tests/gateway/test_discord_plugin_setup.py",
+      "rule": "discord-client-id",
+      "fileHash": "36d95a05fd95ed65675a73f66ec49cd21ba8a9cf8d1754fadd62c01d0f903d3e"
+    },
+    {
+      "file": "tests/gateway/test_teams_dotenv_isolation.py",
+      "rule": "generic-api-key",
+      "fileHash": "979dfbf9839b18d9fa6ab2e24e1a8c37a4f1f89bcd82d83cbd01676f024125fa"
+    },
+    {
+      "file": "optional-skills/mlops/training/unsloth/references/llms-txt.md",
+      "rule": "generic-api-key",
+      "fileHash": "1888f959fc67d57215085e496960fb20a91ea17bf881be5805b4913a4407f193"
+    },
+    {
+      "file": "tests/gateway/test_telegram_noise_filter.py",
+      "rule": "curl-auth-header",
+      "fileHash": "1338cf7911481e926fdd7bcb867c9b71732c25212961ced6f82af5380a3dfc7f"
+    },
+    {
+      "file": "tests/gateway/test_tui_approval_redaction.py",
+      "rule": "curl-auth-header",
+      "fileHash": "8d9b2a4e4cdf9e75e87d0ecaa3296fe74a9f89cac76b887b5986179189745696"
+    },
+    {
+      "file": "tests/gateway/test_weak_credential_guard.py",
+      "rule": "generic-api-key",
+      "fileHash": "a3800e05b6207f59234cfefcf3c12db9a14bc316dc68b28e33d7a2a53b871bb1"
+    },
+    {
+      "file": "tests/hermes_cli/test_arcee_provider.py",
+      "rule": "generic-api-key",
+      "fileHash": "cbda8b99f41a581d62c313c1ffb9191ee90be7087495cff668e0509866353d0f"
+    },
+    {
+      "file": "tests/hermes_cli/test_agent_import.py",
+      "rule": "generic-api-key",
+      "fileHash": "35ec655ffdace7f2f614006ce6860324fc7a4f368b076cd0b64156b3bc0c06bb"
+    },
+    {
+      "file": "tests/hermes_cli/test_dashboard_admin_endpoints.py",
+      "rule": "generic-api-key",
+      "fileHash": "8783bf3a87353192165af8022e1eea987ff1677d2da4a0366b756360dcb9e65d"
+    },
+    {
+      "file": "tests/hermes_cli/test_config.py",
+      "rule": "generic-api-key",
+      "fileHash": "2fa940e4ac4ab9124210d406ae464f3d0871e96bb670033c9736e3b04cf1ba00"
+    },
+    {
+      "file": "tests/hermes_cli/test_debug.py",
+      "rule": "generic-api-key",
+      "fileHash": "c1465ef08d9f4a9d324838b094985d6e0740ce8481f2f021949cb7707f11fd31"
+    },
+    {
+      "file": "tests/hermes_cli/test_ollama_cloud_auth.py",
+      "rule": "generic-api-key",
+      "fileHash": "caf9c4a19e2c11dc4251b6e6c3367a5015b440927f9b1cf8ae718c7ec5203d2c"
+    },
+    {
+      "file": "tests/hermes_cli/test_sessions_export_md_cli.py",
+      "rule": "generic-api-key",
+      "fileHash": "ee090d396bd5023cef0a29bf5327254dad4edd0859afa8c767596578baff8326"
+    },
+    {
+      "file": "tests/hermes_cli/test_tencent_tokenhub_provider.py",
+      "rule": "generic-api-key",
+      "fileHash": "b9c3bf3f87eb826ecf6a7022bcc64b8078fa23f50ed0c44e589b0cdf26671343"
+    },
+    {
+      "file": "tests/hermes_cli/test_xiaomi_provider.py",
+      "rule": "generic-api-key",
+      "fileHash": "1e4683de55f131df6eeadd9073aa2dcea241116258456c5b30e10d6b66748f12"
+    },
+    {
+      "file": "tests/run_agent/test_81641_text_turn_incremental_persistence.py",
+      "rule": "generic-api-key",
+      "fileHash": "53a1598bf8160437f4f2b17a937c8e17b25879394692f15d63224e3bde997d9a"
+    },
+    {
+      "file": "tests/run_agent/test_anthropic_third_party_oauth_guard.py",
+      "rule": "generic-api-key",
+      "fileHash": "93afd804ad8579eff349486eb16daf434d9bb1f0411e4b8b81a801ab9ad55409"
+    },
+    {
+      "file": "tests/run_agent/test_413_compression.py",
+      "rule": "generic-api-key",
+      "fileHash": "809f2f47a2296067d2de1952041c301cba52c18c40dc7e1f0ab2651e0d4f855f"
+    },
+    {
+      "file": "tests/run_agent/test_compression_lock_defer.py",
+      "rule": "generic-api-key",
+      "fileHash": "9b89aba48009b995498622c4ebb9d4bd6c9158cb0242028b4410f00684d96a55"
+    },
+    {
+      "file": "tests/run_agent/test_compression_budget_refund.py",
+      "rule": "generic-api-key",
+      "fileHash": "12b2e9d25d16900fe3b00e02bb3edac76d05ee4fed3cc7a86b65f067355953cc"
+    },
+    {
+      "file": "tests/run_agent/test_compression_feasibility.py",
+      "rule": "generic-api-key",
+      "fileHash": "1da4cc1597fe38c5e8be10c936b4b00e6e6eadefafb084759d9037db9a804b57"
+    },
+    {
+      "file": "tests/run_agent/test_continuation_ceiling_wedge.py",
+      "rule": "generic-api-key",
+      "fileHash": "bcec9b9bca9a38520b6668dfca3fd925f82033d553732fc3c48c17d68d56f2bf"
+    },
+    {
+      "file": "tests/run_agent/test_dropped_tool_call_recovery.py",
+      "rule": "generic-api-key",
+      "fileHash": "8f44464dbd43cbe8eb4f06f796af4bfed82405b4ee6c378ef12aee481fed9605"
+    },
+    {
+      "file": "tests/plugins/test_langfuse_plugin.py",
+      "rule": "generic-api-key",
+      "fileHash": "7c5fb2ccd42b0e0e9fe0c07314f3e012fb9d0a59978e484a0fb3bbdc8cd2ea94"
+    },
+    {
+      "file": "tests/run_agent/test_init_fallback_on_exhausted_pool.py",
+      "rule": "generic-api-key",
+      "fileHash": "38faf95df04aa62699615bfcf10c3bd0d0aa57c7c0f38f43ae0b7930d29a0ae8"
+    },
+    {
+      "file": "tests/run_agent/test_invalid_context_length_warning.py",
+      "rule": "generic-api-key",
+      "fileHash": "ea3a4bb706816b84ca250c261f8d294d11624322c73307769f6c65f42b40f9bc"
+    },
+    {
+      "file": "tests/run_agent/test_malformed_tool_arguments.py",
+      "rule": "generic-api-key",
+      "fileHash": "a27805664f6270b1f874d58ca46d7fff286cb323b9f24c20c3fc5bb97dc26572"
+    },
+    {
+      "file": "tests/run_agent/test_memory_provider_init.py",
+      "rule": "generic-api-key",
+      "fileHash": "c1f969851b1509d9b4c7495ebd7702fcdf914f582b26680a466b2f12364483b8"
+    },
+    {
+      "file": "tests/run_agent/test_nonretryable_error_html_summary.py",
+      "rule": "generic-api-key",
+      "fileHash": "80c052197d3088ab9d42085cc1b5e0a4bd229ae5b29ba8c88320b7a103ff68d8"
+    },
+    {
+      "file": "tests/run_agent/test_plugin_context_engine_init.py",
+      "rule": "generic-api-key",
+      "fileHash": "be693b8c5695c9f926c21f80a9aa5ba6137947cbff953a43323d6545dd4707d0"
+    },
+    {
+      "file": "tests/run_agent/test_per_model_threshold_init_ordering.py",
+      "rule": "generic-api-key",
+      "fileHash": "9bb92317196702580172c5bbb1d37c9f3d0506c413d2e2ef20270e0dfaa081d7"
+    },
+    {
+      "file": "tests/run_agent/test_overflow_overhead_aware_tokens.py",
+      "rule": "generic-api-key",
+      "fileHash": "41712cb27a600a99dd41d66789944f469d1e3b878ecf32e87baaf9979200c412"
+    },
+    {
+      "file": "tests/run_agent/test_post_tool_compression_attempt_cap.py",
+      "rule": "generic-api-key",
+      "fileHash": "132eb01eecae0d2bd575b1327a353e15bab38bf35a43999bcfbc1c0fecab4fa7"
+    },
+    {
+      "file": "tests/run_agent/test_proactive_prune_loop_wiring.py",
+      "rule": "generic-api-key",
+      "fileHash": "ef95b66ef5d19d0c6784c5f577368788387d1c867c0c80f7a349ca58f4e4a423"
+    },
+    {
+      "file": "tests/run_agent/test_reset_aware_primary_restore.py",
+      "rule": "generic-api-key",
+      "fileHash": "9ae08c0c335b4fba35bbddcd6999578b3f3f9dba2a954a4e8635676179c0bc89"
+    },
+    {
+      "file": "tests/run_agent/test_partial_stream_finish_reason.py",
+      "rule": "generic-api-key",
+      "fileHash": "6a39a0bde607446e52b108d00d7d92e2f7075fb306bd4612a7346294fa954f4d"
+    },
+    {
+      "file": "tests/run_agent/test_primary_runtime_restore.py",
+      "rule": "generic-api-key",
+      "fileHash": "0e3115223fda677881f18d4e6c63e9c64d510283a1e2de38ffc790fbc8988bfb"
+    },
+    {
+      "file": "tests/run_agent/test_thinking_prefill_trailing_turn.py",
+      "rule": "generic-api-key",
+      "fileHash": "7d856aad62f6802b8e0bf123cc9d5806cc87d7340e0d1109a125fb05f324ef3b"
+    },
+    {
+      "file": "tests/run_agent/test_turn_completion_explainer.py",
+      "rule": "generic-api-key",
+      "fileHash": "d76213d17bf988b928fecf9e6ca95f9ee85df4ce282c4a7b41711575b9808777"
+    },
+    {
+      "file": "tests/run_agent/test_tool_batch_segmentation.py",
+      "rule": "generic-api-key",
+      "fileHash": "7314fecaf0e6ec0ffb8660fdc1886038f7346a37c49237d02c503c1a16edab06"
+    },
+    {
+      "file": "tests/run_agent/test_tool_call_guardrail_runtime.py",
+      "rule": "generic-api-key",
+      "fileHash": "212439a1eddfd602bdebfc83f28f6e287a889c1a84dbaa88be5af208b5bafb2b"
+    },
+    {
+      "file": "tests/skills/test_google_workspace_api.py",
+      "rule": "generic-api-key",
+      "fileHash": "9e945f3bc57e35eebf155965ace7eb79024fc5eb12eb9698b7272f04a46e5dd3"
+    },
+    {
+      "file": "tests/skills/test_openclaw_migration_hardening.py",
+      "rule": "generic-api-key",
+      "fileHash": "3a51406f32932576115c34e561970db3ca9495156502fb46ad1155c4ff257e8f"
+    },
+    {
+      "file": "tests/stress/test_atypical_scenarios.py",
+      "rule": "generic-api-key",
+      "fileHash": "15e4e0274c78455786f17d69b2684cf4f4026b98eb92ad04b9228f1f9ba80ef3"
+    },
+    {
+      "file": "tests/test_honcho_client_config.py",
+      "rule": "generic-api-key",
+      "fileHash": "83b2da54984d62b0af96c073521d46292c1d8a6d7a2f7ac963ba8560bf8456d6"
+    },
+    {
+      "file": "tests/tools/test_browser_camofox.py",
+      "rule": "generic-api-key",
+      "fileHash": "bf5174f1c3bed65ea0ab078e471ac24eb2331ceb69052e73601adc0746243b0a"
+    },
+    {
+      "file": "tests/tools/test_browser_type_redaction.py",
+      "rule": "generic-api-key",
+      "fileHash": "f89166712912e46f5c1d950eeb3babfefe105dd5c8ffca99ee1c86004da925cb"
+    },
+    {
+      "file": "tests/tools/test_credential_pool_env_fallback.py",
+      "rule": "generic-api-key",
+      "fileHash": "a00de6fab55477ef371896b3504a24d6f299d323736653a2a426fa38c4865ef2"
+    },
+    {
+      "file": "tests/tools/test_approval.py",
+      "rule": "generic-api-key",
+      "fileHash": "f147b0f4fb7034279295f40f4f4281f02ecd3514b1a4906c3a0a9323c396782f"
+    },
+    {
+      "file": "tests/tools/test_approval.py",
+      "rule": "curl-auth-header",
+      "fileHash": "f147b0f4fb7034279295f40f4f4281f02ecd3514b1a4906c3a0a9323c396782f"
+    },
+    {
+      "file": "tests/run_agent/test_run_agent.py",
+      "rule": "generic-api-key",
+      "fileHash": "0b26b592efb0bae074c39baad81ea6efafe0beb8db1b027358dd0e47a57099f9"
+    },
+    {
+      "file": "tests/tools/test_memory_tool.py",
+      "rule": "generic-api-key",
+      "fileHash": "538959065fe6a150d040b8af1d1d2b3adb1cb10eea73146ab3db2789e71f9b52"
+    },
+    {
+      "file": "tests/tools/test_mcp_tool.py",
+      "rule": "generic-api-key",
+      "fileHash": "b485c5bb9f824547c3053d918bdd0a6b11baad034b6743855611bc7c71ea7554"
+    },
+    {
+      "file": "tests/tools/test_terminal_output_transform_hook.py",
+      "rule": "generic-api-key",
+      "fileHash": "b80c7250e1bdd67f8a249de73137679e85fefa31b496cb9ac73855f42e7c84d0"
+    },
+    {
+      "file": "tests/tools/test_process_registry.py",
+      "rule": "generic-api-key",
+      "fileHash": "fb8a52390dd5e67b6800a19a46d6e96af443d948e8836ad554af53f7f62abbda"
+    },
+    {
+      "file": "tests/tools/test_process_registry.py",
+      "rule": "curl-auth-header",
+      "fileHash": "fb8a52390dd5e67b6800a19a46d6e96af443d948e8836ad554af53f7f62abbda"
+    },
+    {
+      "file": "website/docs/guides/tips.md",
+      "rule": "discord-client-id",
+      "fileHash": "89c0740161aab858e68b7c1688cfb66db1d3e3088cef6794e5c2470fc5cc6944"
+    },
+    {
+      "file": "website/docs/user-guide/features/api-server.md",
+      "rule": "curl-auth-header",
+      "fileHash": "d2ca1cf2aa07adc86d28dab36e4eb19e006cd030e47abe4a8db7c33d6fc60414"
+    },
+    {
+      "file": "website/docs/user-guide/features/web-search.md",
+      "rule": "generic-api-key",
+      "fileHash": "4f263fd6bc3d03a96c6f3a8538df904f337b0139f81c009f2398314b74ed853c"
+    },
+    {
+      "file": "website/docs/user-guide/features/voice-mode.md",
+      "rule": "discord-client-id",
+      "fileHash": "fc8a4f4e5e74962e51400b3fb28f41ae053f96551b9652789df2818f0435e5f5"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/mattermost.md",
+      "rule": "mattermost-access-token",
+      "fileHash": "9d90cbcb3e17f3bff49d4c00377d954a5ddd915c6df934d4468eefd512e9a2f2"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/mattermost.md",
+      "rule": "curl-auth-header",
+      "fileHash": "9d90cbcb3e17f3bff49d4c00377d954a5ddd915c6df934d4468eefd512e9a2f2"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/index.md",
+      "rule": "discord-client-id",
+      "fileHash": "c9c024cea2ff09e04c0d8d092e3608463fb77f74e7b6f735149e3cbf917d7b26"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/index.md",
+      "rule": "mattermost-access-token",
+      "fileHash": "c9c024cea2ff09e04c0d8d092e3608463fb77f74e7b6f735149e3cbf917d7b26"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/open-webui.md",
+      "rule": "curl-auth-header",
+      "fileHash": "5c351f8c84b816361415d2dd437e04a5f173eedf97ac48c8de838ab6901be06a"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/discord.md",
+      "rule": "discord-client-id",
+      "fileHash": "6917053504d28072786b629e1fd137dcd418d81f4fa5f9ade6561e6da81813a5"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/wecom-callback.md",
+      "rule": "generic-api-key",
+      "fileHash": "e5f791d6751ff3c84b657ae29e06282ddc3b723cca4e6f2a3c97ecedf74e56ba"
+    },
+    {
+      "file": "website/docs/user-guide/messaging/matrix.md",
+      "rule": "curl-auth-header",
+      "fileHash": "61d11e30501410defa7ac87d86a936a20eeb121e43a23f513f908a1b87ae5bab"
+    },
+    {
+      "file": "website/docs/user-guide/security.md",
+      "rule": "discord-client-id",
+      "fileHash": "78cd199ed0ddc8193115b15f1d6bbad0a83c8ef7b1958fe68b71dadcc2f47690"
+    },
+    {
+      "file": "website/docusaurus.config.ts",
+      "rule": "generic-api-key",
+      "fileHash": "952b1d6c62498416d118e1fd70c678e82838b80cd4b6a860ee7587a441279d18"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/guides/tips.md",
+      "rule": "discord-client-id",
+      "fileHash": "f845776945940dec62e765af1a76e9f4e305fd9a2e3b6bc6da78b18956b8c24c"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/api-server.md",
+      "rule": "curl-auth-header",
+      "fileHash": "f201a545b0051484e35fdcced46af0a01a81cef8e64abfd8010dc5d11e5383b1"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/voice-mode.md",
+      "rule": "discord-client-id",
+      "fileHash": "78c064ca2fae3befba30b201d271bb0d6680dbc24683235f9491778853701446"
+    },
+    {
+      "file": "optional-skills/mlops/training/unsloth/references/llms-full.md",
+      "rule": "generic-api-key",
+      "fileHash": "d52a2ad6458e962f25a473edbff89bdf9f09b8e51cdbfa1ac9e7b8c76cb11df0"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/mattermost.md",
+      "rule": "curl-auth-header",
+      "fileHash": "74ff872e0c602566b9fd04abb2f9cf02f7d1303ba964ddc0a1bc9b2b4b8bcec9"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/mattermost.md",
+      "rule": "mattermost-access-token",
+      "fileHash": "74ff872e0c602566b9fd04abb2f9cf02f7d1303ba964ddc0a1bc9b2b4b8bcec9"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/discord.md",
+      "rule": "discord-client-id",
+      "fileHash": "01cc2d0368c11115d637033eb46a0e78e9b5b4b7ea047a5bd397deaa94f95beb"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/index.md",
+      "rule": "mattermost-access-token",
+      "fileHash": "25153b0409929974fea0aad6cc7167798e9e0b643a7b56739087bac5fd73c01e"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/index.md",
+      "rule": "discord-client-id",
+      "fileHash": "25153b0409929974fea0aad6cc7167798e9e0b643a7b56739087bac5fd73c01e"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/open-webui.md",
+      "rule": "curl-auth-header",
+      "fileHash": "4c2be25cf14dd06b77ef3b833acd581902a166a844cdecb633fe9189ccd289e0"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/wecom-callback.md",
+      "rule": "generic-api-key",
+      "fileHash": "1b467b5b36cea6de07cb7e1620059b03ca21d78e38d52b16f0a54561196ed3af"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/matrix.md",
+      "rule": "curl-auth-header",
+      "fileHash": "fb9d8a56ddc72d444d9e61c386737ce6182ab20b8c71038876f0604e1186f0d2"
+    },
+    {
+      "file": "website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/security.md",
+      "rule": "discord-client-id",
+      "fileHash": "564d16c117b49eb71b11cf91b6ca732c0635d9551e99b59fd5cf6f46e9634aef"
+    }
+  ]
+}

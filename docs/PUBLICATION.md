@@ -1,0 +1,15 @@
+# Public website and release maintenance
+
+The static website is in `site/`, separately from the authenticated private application in `cloud/`. Build from the repository root with `npm --prefix site ci --ignore-scripts --workspaces=false`, `npm --prefix site run build`, and `npm --prefix site test`. Publish only `site/dist` to the `revenue-partner-studio` Cloudflare Pages project. Never publish private app state or inject model/Orgo credentials into this build.
+
+Routes are `/`, `/demo`, `/build` and `/prep`. Preparation downloads are generated from `docs/` during the build, so the web and repository guides stay identical. Brand metadata is in `brand/product.json`. The demo imports only static fixtures and presentation styles; its Content Security Policy forbids network connections to agent services. Browser acceptance must still exercise mobile layout, keyboard access, buttons, reset, downloads and request inspection when the approved browser surface is available.
+
+The public domain is `betterthangrokbot.com`, with `www` redirected to the root. Before changing nameservers, export and preserve the current authoritative DNS zone, check DNSSEC and add matching records to Cloudflare. Attach both custom domains in Pages, verify the Pages deployment, then update registrar nameservers and confirm HTTPS. An apex Pages domain requires Cloudflare nameservers. Do not replace existing mail or unrelated records based on public DNS queries alone.
+
+## Source and package checks
+
+Run `node distribution/scan-public.mjs` against the staged snapshot using Gitleaks. Retained false positives are reviewed synthetic fixtures, public client IDs, examples and checksums. The allowlist binds each finding to the **entire file hash**; edits cannot inherit an exception from a line number. A new finding blocks publication until reviewed. For an extracted source/runtime package, run the same scanner with its directory argument and `--directory`.
+
+Tag `v0.2.0-beta.1` only after local checks and documented hosted results. Create a source archive, public-site archive and preparation downloads; include SHA256SUMS. Do not attach old Mac ZIPs, private operational evidence, account IDs or histories. This beta’s optional companion is built through the authenticated recipient installation; no notarized public desktop binary is claimed.
+
+The repository’s MIT license and upstream notices travel with the source. Review dependency licenses separately when changing dependencies. Keep the old private source and installed clients as rollback options. Update deployment and scheduled maintenance references only after the new source is reachable and verified.

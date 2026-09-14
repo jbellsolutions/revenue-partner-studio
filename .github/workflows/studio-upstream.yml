@@ -1,0 +1,25 @@
+name: Hermes upstream watch
+on:
+  schedule:
+    # Daily detection runs on GitHub even when the owner's Mac is closed.
+    - cron: '17 12 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: studio-upstream-watch
+  cancel-in-progress: false
+jobs:
+  check:
+    if: github.repository == 'jbellsolutions/revenue-partner-studio'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Inspect official release and development commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 distribution/check_upstream.py --publish

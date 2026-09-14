@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+export HERMES_HOME=/root/.hermes HERMES_STUDIO_RUNTIME=1 HERMES_DESKTOP=1
+export HERMES_DASHBOARD_SESSION_TOKEN="$(cat /root/.hermes/studio/gateway-token)"
+cd /opt/hermes-orgo-studio
+exec venv/bin/hermes serve --isolated --host 127.0.0.1 --port 8787

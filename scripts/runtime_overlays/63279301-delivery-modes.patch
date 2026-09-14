@@ -1,0 +1,2296 @@
+diff --git a/hermes_cli/dashboard_procs.py b/hermes_cli/dashboard_procs.py
+index 5d200eb..058f72a 100644
+--- a/hermes_cli/dashboard_procs.py
++++ b/hermes_cli/dashboard_procs.py
+@@ -954,6 +954,22 @@ def _process_age_seconds(pid: int) -> float:
+     return max(0.0, _time.time() - _psutil.Process(pid).create_time())
+ 
+ 
++def _desktop_serve_has_same_home(pid: int) -> bool:
++    """A missing local lock is not permission to reap another profile's server."""
++    import psutil
++
++    try:
++        environment = psutil.Process(pid).environ()
++        home = environment.get("HERMES_HOME", "").strip()
++        return bool(
++            environment.get("HERMES_DESKTOP") == "1"
++            and home and Path(home).is_absolute()
++            and Path(home).resolve() == _hermes_home_dir().resolve()
++        )
++    except (psutil.Error, OSError, ValueError, RuntimeError):
++        return False  # Unidentifiable ownership must never widen cleanup.
++
++
+ def _reap_orphaned_desktop_local_serves(
+     *,
+     reason: str = "orphaned desktop-local hermes serve",
+@@ -976,6 +992,8 @@ def _reap_orphaned_desktop_local_serves(
+     corpses at the start of a new Desktop backend.
+ 
+     Safety:
++    - only positively identified Desktop processes in this exact Hermes home;
++      foreign, missing or unreadable home identity is never cleanup authority
+     - only the Desktop-local spawn shape (loopback + ``--port 0``)
+     - only processes whose current ppid is 1 (or 0 on some supervisors)
+     - never self / never HERMES_DESKTOP_CHILD_PID entries
+@@ -1046,6 +1064,8 @@ def _reap_orphaned_desktop_local_serves(
+             continue
+         if pid in owned_now:
+             continue
++        if not _desktop_serve_has_same_home(pid):
++            continue
+         ppid = _process_ppid(pid)
+         if ppid is None:
+             continue
+@@ -1120,4 +1140,3 @@ def _reap_orphaned_desktop_local_serves(
+             pass
+ 
+     return {"matched": matched, "killed": killed, "failed": failed}
+-
+diff --git a/hermes_cli/gateway.py b/hermes_cli/gateway.py
+index 6b15548..a0f1d35 100644
+--- a/hermes_cli/gateway.py
++++ b/hermes_cli/gateway.py
+@@ -2326,6 +2326,19 @@ def _reaper_candidate_is_supervisor_owned(pid: int) -> bool:
+     return False
+ 
+ 
++def _gateway_has_same_home(pid: int) -> bool:
++    """Only an explicit, readable process home grants profile cleanup authority."""
++    import psutil
++    from hermes_constants import get_hermes_home
++
++    try:
++        home = psutil.Process(pid).environ().get("HERMES_HOME", "").strip()
++        return bool(home and Path(home).is_absolute()
++                    and Path(home).resolve() == get_hermes_home().resolve())
++    except (psutil.Error, OSError, ValueError, RuntimeError):
++        return False
++
++
+ def _reap_unsupervised_gateway_orphans(extra_exclude: set | None = None) -> bool:
+     """Kill no-supervisor gateway orphans the pidfile/runtime record can't see.
+ 
+@@ -2457,7 +2470,8 @@ def _reap_unsupervised_gateway_orphans(extra_exclude: set | None = None) -> bool
+         orphans = [
+             p
+             for p in find_gateway_pids(exclude_pids=own)
+-            if p and p > 0 and not _reaper_candidate_is_supervisor_owned(p)
++            if p and p > 0 and _gateway_has_same_home(p)
++            and not _reaper_candidate_is_supervisor_owned(p)
+         ]
+     except Exception:
+         return False
+diff --git a/hermes_cli/kanban.py b/hermes_cli/kanban.py
+index 8cef514..2968db7 100644
+--- a/hermes_cli/kanban.py
++++ b/hermes_cli/kanban.py
+@@ -394,6 +394,10 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
+                                "and re-queues the task.")
+     p_create.add_argument("--created-by", default="user",
+                           help="Author name recorded on the task (default: user)")
++    p_create.add_argument("--notify", action="store_true",
++                          help="Subscribe the current connected Hermes chat to task events. "
++                               "JSON output includes subscribed=false when no return channel "
++                               "is available; the task still exists, so do not recreate it.")
+     p_create.add_argument("--skill", action="append", default=[], dest="skills",
+                           help="Skill to force-load into the worker "
+                                "(repeatable). The kanban lifecycle is already "
+@@ -1662,8 +1666,22 @@ def _cmd_create(args: argparse.Namespace) -> int:
+             file=sys.stderr,
+         )
+         return 2
++    wants_notification = bool(getattr(args, "notify", False))
++    create = kb.create_task
++    if wants_notification:
++        # Reuse the tool's scoped delivery routing/config gate, rather than
++        # guessing a chat from a durable session id or another profile's env.
++        from tools.kanban_tools import _create_task_with_notification
++        create = _create_task_with_notification
++    from gateway.session_context import get_session_env
++    origin_session = (
++        get_session_env("HERMES_SESSION_CHAT_ID", "")
++        if get_session_env("HERMES_SESSION_PLATFORM", "") == "api_server"
++        else get_session_env("HERMES_SESSION_ID", "")
++    ) or None
++    subscribed = False
+     with kb.connect_closing() as conn:
+-        task_id = kb.create_task(
++        created = create(
+             conn,
+             title=args.title,
+             body=args.body,
+@@ -1686,12 +1704,23 @@ def _cmd_create(args: argparse.Namespace) -> int:
+             goal_mode=bool(getattr(args, "goal_mode", False)),
+             goal_max_turns=getattr(args, "goal_max_turns", None),
+             initial_status=getattr(args, "initial_status", "running"),
++            session_id=origin_session,
+         )
++        if wants_notification:
++            task_id, subscribed = created
++        else:
++            task_id = created
+         task = kb.get_task(conn, task_id)
+     if getattr(args, "json", False):
+-        print(json.dumps(_task_to_dict(task), indent=2, ensure_ascii=False))
++        payload = _task_to_dict(task)
++        if wants_notification:
++            payload["subscribed"] = subscribed
++        print(json.dumps(payload, indent=2, ensure_ascii=False))
+     else:
+         print(f"Created {task_id}  ({task.status}, assignee={task.assignee or '-'})")
++        if wants_notification:
++            print("Subscribed the current chat to task events." if subscribed else
++                  "No return notification was attached. The task exists; poll this task id, do not recreate it.")
+ 
+         # Warn when the task would sit in `ready` because no dispatcher is
+         # present. Only warn on ready+assigned tasks — triage/todo are
+diff --git a/hermes_cli/kanban_db.py b/hermes_cli/kanban_db.py
+index d685853..6d8d41c 100644
+--- a/hermes_cli/kanban_db.py
++++ b/hermes_cli/kanban_db.py
+@@ -11486,7 +11486,9 @@ def add_notify_sub(
+     insert_chat_type = chat_type or "dm"
+     now = int(time.time())
+     metadata_json = _encode_notify_delivery_metadata(delivery_metadata)
+-    with write_txn(conn):
++    # Pure DB composition: task creation can attach its return route under
++    # the same outer commit, before a dispatcher can complete the new task.
++    with write_txn(conn, allow_nested=True):
+         conn.execute(
+             """
+             INSERT OR IGNORE INTO kanban_notify_subs
+diff --git a/hermes_state.py b/hermes_state.py
+index 166c39a..effa608 100644
+--- a/hermes_state.py
++++ b/hermes_state.py
+@@ -11752,6 +11752,47 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
+             chain.append(child_id)
+         return chain
+ 
++    def get_compression_delivery_keys(self, session_id: str) -> List[str]:
++        """Original task recipients owned by this exact compression continuation.
++
++        Branch/delegate parent links are not permission to inherit another
++        conversation's subscriptions. Use the same canonical tip selection as
++        resume, preserve original IDs for deduplication, and never let a stale
++        live parent race its continuation for a delivery.
++        """
++        if not session_id or self.get_compression_tip(session_id) != session_id:
++            return []
++        keys = [session_id]
++        current = session_id
++        with self._read_ctx() as conn:
++            for _ in range(100):
++                row = conn.execute(
++                    "SELECT child.parent_session_id, child.model_config, child.source, "
++                    "parent.end_reason FROM sessions child "
++                    "LEFT JOIN sessions parent ON parent.id=child.parent_session_id "
++                    "WHERE child.id=?", (current,),
++                ).fetchone()
++                if not row or not row["parent_session_id"] or row["end_reason"] != "compression":
++                    break
++                try:
++                    metadata = json.loads(row["model_config"] or "{}")
++                except (TypeError, ValueError):
++                    break
++                if (not isinstance(metadata, dict) or row["source"] == "tool"
++                        or metadata.get("_branched_from") is not None
++                        or metadata.get("_delegate_from") is not None):
++                    break
++                current = row["parent_session_id"]
++                if current in keys:
++                    return [session_id]  # A corrupt cycle is not lineage proof.
++                keys.append(current)
++        if len(keys) == 1 or self.get_compression_tip(keys[-1]) == session_id:
++            return keys
++        # Rare ambiguous siblings: only inherit ancestors whose canonical
++        # continuation actually reaches this chat, not every parent link.
++        return [session_id, *(key for key in keys[1:]
++                              if self.get_compression_tip(key) == session_id)]
++
+     def get_compression_tip(self, session_id: str) -> Optional[str]:
+         """The live tip of a compression-continuation chain (see
+         ``get_compression_chain`` for the walk's semantics). Returns the input
+@@ -12836,6 +12877,40 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
+             _do, patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S
+         )
+ 
++    def append_task_notification_once(
++        self, session_id: str, delivery_id: str, text: str, metadata: Dict[str, Any],
++    ) -> bool:
++        """Persist a passive result once, including replay after compression.
++
++        The inbox and transcript use separate transactions. The immutable
++        delivery marker makes a crash between transcript append and inbox ack
++        safe to replay without duplicating the visible result.
++        """
++        recipients = self.get_compression_delivery_keys(session_id)
++        if not recipients or not delivery_id or not text:
++            raise ValueError("Task notice requires a current conversation and delivery identity")
++        marker = "kanban-notice:" + delivery_id
++
++        def _do(conn):
++            self._check_transcript_write_guards(conn, session_id, None)
++            if not conn.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
++                raise ValueError("Task notice conversation is unavailable")
++            placeholders = ",".join("?" for _ in recipients)
++            if conn.execute(
++                f"SELECT 1 FROM messages WHERE session_id IN ({placeholders}) "
++                "AND platform_message_id=? LIMIT 1", (*recipients, marker),
++            ).fetchone():
++                return False
++            inserted, _ = self._insert_message_rows(conn, session_id, [{
++                "role": "user", "content": text, "platform_message_id": marker,
++                "display_kind": "kanban_notification", "display_metadata": metadata,
++            }])
++            conn.execute("UPDATE sessions SET message_count=message_count+? WHERE id=?",
++                         (inserted, session_id))
++            return bool(inserted)
++
++        return self._execute_write(_do, patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S)
++
+     def append_messages_batch(
+         self,
+         session_id: str,
+diff --git a/tests/hermes_cli/test_desktop_serve_home_isolation.py b/tests/hermes_cli/test_desktop_serve_home_isolation.py
+new file mode 100644
+index 0000000..13b09cd
+--- /dev/null
++++ b/tests/hermes_cli/test_desktop_serve_home_isolation.py
+@@ -0,0 +1,45 @@
++"""Startup cleanup must never reach another computer/profile home."""
++from types import SimpleNamespace
++
++import psutil
++import pytest
++
++from hermes_cli import dashboard_procs as procs
++
++
++@pytest.mark.parametrize("scope", ["same", "foreign", "missing", "denied", "not-desktop"])
++def test_orphan_reap_requires_proven_same_home(tmp_path, monkeypatch, scope):
++    own = tmp_path / "own-profile"
++    environment = {"HERMES_HOME": str(own), "HERMES_DESKTOP": "1"}
++    if scope == "foreign":
++        environment["HERMES_HOME"] = str(tmp_path / "another-computer")
++    elif scope == "missing":
++        environment.pop("HERMES_HOME")
++    elif scope == "not-desktop":
++        environment.pop("HERMES_DESKTOP")
++
++    def environ():
++        if scope == "denied":
++            raise psutil.AccessDenied(987654)
++        return environment
++
++    signals = []
++    monkeypatch.setattr(procs, "_hermes_home_dir", lambda: own)
++    monkeypatch.setattr(procs, "_scan_dashboard_processes", lambda **kw: [
++        (987654, "hermes serve --isolated --host 127.0.0.1 --port 0")])
++    monkeypatch.setattr(procs, "_process_ppid", lambda pid: 1)
++    monkeypatch.setattr(procs, "_process_age_seconds", lambda pid: 600, raising=False)
++    monkeypatch.setattr(psutil, "Process", lambda pid: SimpleNamespace(environ=environ))
++    monkeypatch.setattr(psutil, "pid_exists", lambda pid: False)
++    monkeypatch.setattr(procs.os, "kill", lambda pid, sig: signals.append((pid, sig)))
++    monkeypatch.setattr(procs.sys, "platform", "linux")
++    result = procs._reap_orphaned_desktop_local_serves(
++        lock_owned_pids_fn=lambda: set(), sleep_fn=lambda seconds: None,
++        signal_term=15, signal_kill=9,
++    )
++    if scope == "same":
++        assert signals == [(987654, 15)]
++        assert result["killed"] == [987654]
++    else:
++        assert signals == []
++        assert result["matched"] == []
+diff --git a/tests/hermes_cli/test_gateway.py b/tests/hermes_cli/test_gateway.py
+index 5defbb0..50e04fb 100644
+--- a/tests/hermes_cli/test_gateway.py
++++ b/tests/hermes_cli/test_gateway.py
+@@ -591,6 +591,14 @@ class TestStopProfileGateway:
+         assert killed_pid in reap_extra_excludes[0]
+ 
+ 
++@pytest.fixture
++def synthetic_gateway_home(monkeypatch):
++    # These classes already supply fake scanner PIDs and mocked signals.
++    # Home-identity denial is covered separately by the real predicate tests.
++    monkeypatch.setattr(gateway, "_gateway_has_same_home", lambda pid: True)
++
++
++@pytest.mark.usefixtures("synthetic_gateway_home")
+ class TestReapUnsupervisedGatewayOrphansMacOS:
+     """Tests that the orphan reaper excludes launchd-managed PIDs on macOS.
+ 
+@@ -667,6 +675,7 @@ class TestReapUnsupervisedGatewayOrphansMacOS:
+         assert killed_pids == []  # nothing was killed
+ 
+ 
++@pytest.mark.usefixtures("synthetic_gateway_home")
+ class TestReapUnsupervisedGatewayOrphansWindows:
+     """Tests that the orphan reaper spares the recorded gateway PID and its
+     supervision chain on Windows.
+@@ -837,6 +846,7 @@ class TestReapUnsupervisedGatewayOrphansWindows:
+         assert killed_pids == []  # the standalone gateway survived
+ 
+ 
++@pytest.mark.usefixtures("synthetic_gateway_home")
+ class TestReaperCandidateIsSupervisorOwned:
+     """Regression for the Windows pidfile-less supervisor-owned case (#83683).
+ 
+@@ -972,6 +982,7 @@ def test_module_has_logger():
+     assert gateway.logger.name == "hermes_cli.gateway"
+ 
+ 
++@pytest.mark.usefixtures("synthetic_gateway_home")
+ class TestWindowsScheduledTaskSupervisorGuard:
+     """The reaper must skip when the profile's scheduled task is still a
+     supervisor — Running *or* Ready.
+diff --git a/tests/hermes_cli/test_gateway_home_isolation.py b/tests/hermes_cli/test_gateway_home_isolation.py
+new file mode 100644
+index 0000000..2283946
+--- /dev/null
++++ b/tests/hermes_cli/test_gateway_home_isolation.py
+@@ -0,0 +1,45 @@
++"""A startup/restart sweep is not authority over another profile's gateway."""
++from types import SimpleNamespace
++
++import psutil
++import pytest
++
++from hermes_cli import gateway
++from gateway import status
++
++
++@pytest.mark.parametrize("scope", ["same", "foreign", "missing", "denied", "relative"])
++def test_gateway_orphan_reap_requires_proven_same_home(tmp_path, monkeypatch, scope):
++    own = tmp_path / "own-profile"
++    monkeypatch.setenv("HERMES_HOME", str(own))
++    environment = {"HERMES_HOME": str(own)}
++    if scope == "foreign":
++        environment["HERMES_HOME"] = str(tmp_path / "another-computer")
++    elif scope == "missing":
++        environment.clear()
++    elif scope == "relative":
++        environment["HERMES_HOME"] = "."
++
++    def environ():
++        if scope == "denied":
++            raise psutil.AccessDenied(987654)
++        return environment
++
++    signals, markers = [], []
++    monkeypatch.setattr(gateway, "supports_systemd_services", lambda: False)
++    monkeypatch.setattr(gateway, "is_windows", lambda: False, raising=False)
++    monkeypatch.setattr(gateway, "find_gateway_pids", lambda **kw: [987654])
++    monkeypatch.setattr(gateway, "_get_service_pids", lambda **kw: set(), raising=False)
++    monkeypatch.setattr(gateway, "_reaper_candidate_is_supervisor_owned", lambda pid: False, raising=False)
++    monkeypatch.setattr(status, "get_running_pid", lambda **kw: None)
++    monkeypatch.setattr(status, "_read_pid_record", lambda: None, raising=False)
++    monkeypatch.setattr(status, "_read_gateway_lock_record", lambda: None, raising=False)
++    monkeypatch.setattr(status, "write_planned_stop_marker", lambda pid: markers.append(pid))
++    monkeypatch.setattr(status, "_pid_exists", lambda pid: False)
++    monkeypatch.setattr(psutil, "Process", lambda pid: SimpleNamespace(environ=environ))
++    monkeypatch.setattr(gateway.os, "kill", lambda pid, sig: signals.append((pid, sig)))
++    reaped = gateway._reap_unsupervised_gateway_orphans()
++    if scope == "same":
++        assert reaped and len(signals) == 1 and markers == [987654]
++    else:
++        assert not reaped and not signals and not markers
+diff --git a/tests/hermes_cli/test_kanban_create_return_route.py b/tests/hermes_cli/test_kanban_create_return_route.py
+new file mode 100644
+index 0000000..4cc065a
+--- /dev/null
++++ b/tests/hermes_cli/test_kanban_create_return_route.py
+@@ -0,0 +1,130 @@
++"""Real SQLite coverage for CLI/tool task creation and its chat return route."""
++
++import json
++from contextlib import contextmanager
++
++import pytest
++
++from gateway.session_context import clear_session_vars, set_session_vars
++from hermes_cli import kanban as cli
++from hermes_cli import kanban_db as kb
++
++
++@contextmanager
++def origin(**fields):
++    tokens = set_session_vars(**fields)
++    try:
++        yield
++    finally:
++        clear_session_vars(tokens)
++
++
++def create(command="create 'return-route test' --assignee specialist --json"):
++    return json.loads(cli.run_slash(command))
++
++
++def test_cli_stamps_origin_without_enabling_notifications():
++    with origin(session_id="operator-history", session_key="operator-channel"):
++        task = create()
++    assert task["session_id"] == "operator-history"
++    assert "subscribed" not in task
++    with kb.connect_closing() as conn:
++        assert kb.list_notify_subs(conn, task["id"]) == []
++
++
++def test_api_origin_uses_request_chat_not_child_agent_id():
++    with origin(platform="api_server", chat_id="operator-request", session_id="child-internal"):
++        task = create()
++    assert task["session_id"] == "operator-request"
++
++
++def test_explicit_notify_has_durable_route_and_is_idempotent():
++    command = "create 'return-route test' --assignee specialist --notify --idempotency-key return-once --json"
++    with origin(session_id="operator-history", session_key="operator-channel", profile="default"):
++        first = create(command)
++        second = create(command)
++    assert first["subscribed"] is True
++    assert first["id"] == second["id"]
++    with kb.connect_closing() as conn:
++        subs = kb.list_notify_subs(conn, first["id"])
++        assert len(subs) == 1
++        assert subs[0]["chat_id"] == "operator-channel"
++        assert subs[0]["platform"] == "tui"
++        assert kb.get_task(conn, first["id"]).session_id == "operator-history"
++
++
++def test_scoped_callers_do_not_inherit_foreign_process_channel(monkeypatch):
++    monkeypatch.setenv("HERMES_SESSION_KEY", "foreign-global")
++    monkeypatch.setenv("HERMES_SESSION_ID", "foreign-global-history")
++    tasks = []
++    for name in ("operator-a", "operator-b"):
++        with origin(session_id=name, session_key=name + "-channel"):
++            tasks.append(create("create 'scoped task' --assignee specialist --notify --json"))
++    with kb.connect_closing() as conn:
++        for task, name in zip(tasks, ("operator-a", "operator-b")):
++            assert task["session_id"] == name
++            assert kb.list_notify_subs(conn, task["id"])[0]["chat_id"] == name + "-channel"
++
++
++def test_idempotent_create_does_not_reenable_a_return_route_changed_to_passive():
++    command = "create 'passive return' --assignee specialist --notify --idempotency-key passive-once --json"
++    with origin(session_id="operator-history", session_key="operator-channel", profile="default"):
++        first = create(command)
++        with kb.connect_closing() as conn:
++            assert kb.list_notify_subs(conn, first["id"])[0]["delivery_mode"] == "notify+wake"
++            kb.add_notify_sub(conn, task_id=first["id"], platform="tui", chat_id="operator-channel",
++                              delivery_mode="notify")
++        assert create(command)["id"] == first["id"]
++    with kb.connect_closing() as conn:
++        assert kb.list_notify_subs(conn, first["id"])[0]["delivery_mode"] == "notify"
++
++
++def test_notify_without_return_channel_does_not_promise_delivery(monkeypatch):
++    # A context-local empty binding must mask a different session's global
++    # mirror, not fall through and subscribe to that foreign conversation.
++    monkeypatch.setenv("HERMES_SESSION_KEY", "foreign-global-channel")
++    with origin(session_id="one-shot-cli", session_key=""):
++        task = create("create 'no channel' --assignee specialist --notify --json")
++    assert task["subscribed"] is False
++    with kb.connect_closing() as conn:
++        assert kb.get_task(conn, task["id"]) is not None
++        assert kb.list_notify_subs(conn, task["id"]) == []
++
++
++def test_task_is_not_visible_to_dispatcher_before_subscription(monkeypatch):
++    from tools import kanban_tools as kt
++
++    subscribe = kt._maybe_auto_subscribe
++    observed = []
++
++    def inspect_before_subscribe(conn, task_id):
++        # Another connection is the dispatcher boundary. Neither the task nor
++        # its return route may leak out of the outer creation transaction.
++        with kb.connect_closing() as observer:
++            observed.append(kb.get_task(observer, task_id))
++        return subscribe(conn, task_id)
++
++    monkeypatch.setattr(kt, "_maybe_auto_subscribe", inspect_before_subscribe)
++    with origin(session_id="operator", session_key="operator-channel"):
++        task = create("create 'atomic return' --assignee specialist --notify --json")
++    assert observed == [None]
++    assert task["subscribed"] is True
++
++
++def test_unexpected_creation_failure_rolls_back_task_and_return_route(monkeypatch):
++    from tools import kanban_tools as kt
++
++    subscribe = kt._maybe_auto_subscribe
++
++    def fail_after_subscription(conn, task_id):
++        assert subscribe(conn, task_id)
++        raise RuntimeError("crash before creation commit")
++
++    monkeypatch.setattr(kt, "_maybe_auto_subscribe", fail_after_subscription)
++    with origin(session_id="operator", session_key="operator-channel"):
++        with kb.connect_closing() as conn:
++            with pytest.raises(RuntimeError, match="before creation commit"):
++                kt._create_task_with_notification(conn, title="uncommitted", assignee="specialist")
++    with kb.connect_closing() as conn:
++        assert not kb.list_tasks(conn)
++        assert not kb.list_notify_subs(conn)
+diff --git a/tests/hermes_cli/test_orphan_desktop_serve_reap.py b/tests/hermes_cli/test_orphan_desktop_serve_reap.py
+index 8d1a7e8..3fcd0a5 100644
+--- a/tests/hermes_cli/test_orphan_desktop_serve_reap.py
++++ b/tests/hermes_cli/test_orphan_desktop_serve_reap.py
+@@ -11,12 +11,22 @@ from __future__ import annotations
+ import os
+ from unittest.mock import patch
+ 
++import pytest
++
+ from hermes_cli.dashboard_procs import (
+     _is_desktop_local_serve_cmdline,
+     _reap_orphaned_desktop_local_serves,
+ )
+ 
+ 
++@pytest.fixture(autouse=True)
++def synthetic_same_home_processes(monkeypatch):
++    # Existing synthetic PID cases exercise lock/parent/port rules. Supply
++    # their identity explicitly; foreign/unreadable ownership has its own
++    # real-predicate regressions in test_desktop_serve_home_isolation.py.
++    monkeypatch.setattr("hermes_cli.dashboard_procs._desktop_serve_has_same_home", lambda pid: True)
++
++
+ def test_desktop_local_serve_shape_matches_ephemeral_loopback():
+     assert _is_desktop_local_serve_cmdline(
+         "python -m hermes_cli.main serve --host 127.0.0.1 --port 0"
+diff --git a/tests/tools/test_kanban_tools.py b/tests/tools/test_kanban_tools.py
+index b9d2a52..899d3fe 100644
+--- a/tests/tools/test_kanban_tools.py
++++ b/tests/tools/test_kanban_tools.py
+@@ -898,7 +898,7 @@ def test_create_subscribes_tui_session_via_session_key(monkeypatch, worker_env):
+     assert subs[0]["platform"] == "tui"
+     assert subs[0]["chat_id"] == "tui-session-abc"
+     assert subs[0]["chat_type"] == "dm"
+-    assert subs[0]["delivery_mode"] == "notify"
++    assert subs[0]["delivery_mode"] == "notify+wake"
+ 
+ 
+ def test_create_does_not_subscribe_in_cli_session(monkeypatch, worker_env):
+diff --git a/tests/tui_gateway/test_kanban_notify_poller.py b/tests/tui_gateway/test_kanban_notify_poller.py
+index 575e4a0..95744d9 100644
+--- a/tests/tui_gateway/test_kanban_notify_poller.py
++++ b/tests/tui_gateway/test_kanban_notify_poller.py
+@@ -12,8 +12,11 @@ unsubscribe) and ``_format_kanban_event_text``.
+ """
+ 
+ from types import SimpleNamespace
++import json
+ from unittest.mock import patch
+ 
++import pytest
++
+ from hermes_cli import kanban_db as kb
+ from tui_gateway.server import (
+     _collect_kanban_notifications,
+@@ -23,6 +26,13 @@ from tui_gateway.server import (
+ SESSION_KEY = "tui-session-key-1"
+ 
+ 
++@pytest.fixture(autouse=True)
++def inbox_home(monkeypatch, tmp_path):
++    from tui_gateway import server
++    monkeypatch.setattr(server, "_hermes_home", tmp_path)
++    return tmp_path
++
++
+ def _session(key: str = SESSION_KEY) -> dict:
+     return {"session_key": key}
+ 
+@@ -31,7 +41,9 @@ def _create_subscribed_task(*, chat_id: str = SESSION_KEY, platform: str = "tui"
+     conn = kb.connect()
+     try:
+         tid = kb.create_task(conn, title="notify tui", assignee="worker")
+-        kb.add_notify_sub(conn, task_id=tid, platform=platform, chat_id=chat_id)
++        # Match automatic task creation, which explicitly requests an operator
++        # continuation; passive subscriptions have their own no-model tests.
++        kb.add_notify_sub(conn, task_id=tid, platform=platform, chat_id=chat_id, delivery_mode="notify+wake")
+         return tid
+     finally:
+         conn.close()
+@@ -54,6 +66,39 @@ def _sub_rows(tid: str) -> list:
+ 
+ 
+ class TestCollectKanbanNotifications:
++    def test_delivery_carries_explicit_task_attribution(self, inbox_home):
++        from tui_gateway import notification_inbox
++
++        tid = _create_subscribed_task()
++        _complete(tid, summary="verified result")
++        _collect_kanban_notifications(_session())
++        row = notification_inbox.claim(inbox_home, SESSION_KEY)[0]
++        metadata = json.loads(row["metadata"])
++        assert metadata["task_id"] == tid
++        assert metadata["assignee"] == "worker"
++        assert metadata["kind"] == "completed"
++        assert metadata["title"] == "notify tui"
++        assert metadata["board"] == kb.DEFAULT_BOARD
++        assert metadata["worker"] == "worker"
++
++    def test_reassignment_does_not_change_the_recorded_worker(self, inbox_home):
++        from tui_gateway import notification_inbox
++
++        tid = _create_subscribed_task()
++        _complete(tid)
++        conn = kb.connect()
++        try:
++            kb.assign_task(conn, tid, "reviewer")
++        finally:
++            conn.close()
++        _collect_kanban_notifications(_session())
++        row = notification_inbox.claim(inbox_home, SESSION_KEY)[0]
++        metadata = json.loads(row["metadata"])
++        assert metadata["assignee"] == "reviewer"
++        assert metadata["worker"] == "worker"
++        assert "@worker" in row["text"]
++        assert "@reviewer" not in row["text"]
++
+     def test_zero_sub_board_is_never_opened_writable(self):
+         conn = kb.connect()
+         conn.close()
+@@ -284,7 +329,7 @@ class TestNotificationPollerLoopKanbanWiring:
+         monkeypatch.setattr(
+             server,
+             "_run_prompt_submit",
+-            lambda rid, sid, sess, text: submits.append(text),
++            lambda rid, sid, sess, text, **kwargs: submits.append(text),
+         )
+         stop = threading.Event()
+         thread = threading.Thread(
+@@ -332,9 +377,9 @@ class TestNotificationPollerLoopKanbanWiring:
+         assert any(e == "message.start" for e, _ in emits)
+         assert any(tid in text for text in submits), submits
+         assert session["running"] is True  # poller claimed the turn
+-        assert not session.get("_kanban_pending")
+ 
+-    def test_busy_session_buffers_then_flushes_when_idle(self, monkeypatch):
++    def test_busy_session_buffers_then_flushes_when_idle(self, monkeypatch, inbox_home):
++        from tui_gateway import notification_inbox
+         tid = _create_subscribed_task()
+         _complete(tid, summary="buffered while busy")
+         session = self._poller_session(running=True)
+@@ -345,7 +390,7 @@ class TestNotificationPollerLoopKanbanWiring:
+             # agent turn is dispatched while another turn is running.
+             assert self._wait_for(
+                 lambda: any(e == "status.update" for e, _ in emits)
+-                and session.get("_kanban_pending")
++                and notification_inbox.inspect(inbox_home, SESSION_KEY)
+             )
+             assert not submits
+ 
+@@ -358,5 +403,73 @@ class TestNotificationPollerLoopKanbanWiring:
+             thread.join(timeout=5)
+ 
+         assert any(tid in text for text in submits), submits
+-        assert session["_kanban_pending"] == []
++        assert notification_inbox.inspect(inbox_home, SESSION_KEY)[0]["state"] == "leased"
+         assert session["running"] is True
++
++    def test_new_session_record_recovers_result_buffered_before_restart(self, monkeypatch, inbox_home):
++        from tui_gateway import notification_inbox
++
++        tid = _create_subscribed_task()
++        _complete(tid, summary="survives restart")
++        original = self._poller_session(running=True)
++        stop, thread, _, submits = self._start_poller(original, monkeypatch)
++        try:
++            assert self._wait_for(lambda: notification_inbox.inspect(inbox_home, SESSION_KEY))
++            assert not submits
++        finally:
++            stop.set()
++            thread.join(timeout=5)
++        # Drop every in-memory field. The source cursor has already advanced.
++        assert _collect_kanban_notifications(_session()) == []
++        resumed = self._poller_session(running=False)
++        stop, thread, _, submits = self._start_poller(resumed, monkeypatch)
++        try:
++            assert self._wait_for(lambda: submits)
++            assert tid in submits[0]
++        finally:
++            stop.set()
++            thread.join(timeout=5)
++
++
++def test_inbox_failure_does_not_advance_source_cursor(monkeypatch):
++    from tui_gateway import notification_inbox
++
++    tid = _create_subscribed_task()
++    cursor = _sub_rows(tid)[0]["last_event_id"]
++    _complete(tid)
++    monkeypatch.setattr(notification_inbox, "stage", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")))
++    with pytest.raises(OSError, match="disk full"):
++        _collect_kanban_notifications(_session())
++    assert _sub_rows(tid)[0]["last_event_id"] == cursor
++
++
++def test_crash_between_inbox_and_source_commit_deduplicates(monkeypatch, inbox_home):
++    from tui_gateway import notification_inbox
++
++    tid = _create_subscribed_task()
++    _complete(tid)
++    with monkeypatch.context() as scoped:
++        scoped.setattr(kb, "advance_notify_cursor", lambda *a, **k: (_ for _ in ()).throw(OSError("crash")))
++        with pytest.raises(OSError, match="crash"):
++            _collect_kanban_notifications(_session())
++    assert _collect_kanban_notifications(_session()) == []
++    assert len(notification_inbox.inspect(inbox_home, SESSION_KEY)) == 1
++
++
++def test_declared_profile_owner_blocks_same_key_in_another_profile(monkeypatch, inbox_home):
++    from hermes_cli import profiles
++    from tui_gateway import notification_inbox
++
++    tid = _create_subscribed_task()
++    with kb.connect_closing() as conn:
++        kb.add_notify_sub(conn, task_id=tid, platform="tui", chat_id=SESSION_KEY,
++                          notifier_profile="right-agent")
++    monkeypatch.setattr(profiles, "get_profile_dir", lambda name: inbox_home / "right-agent")
++    before = _sub_rows(tid)[0]["last_event_id"]
++    _complete(tid)
++    assert _collect_kanban_notifications(_session()) == []
++    assert _sub_rows(tid)[0]["last_event_id"] == before
++    right = dict(_session(), profile_home=str(inbox_home / "right-agent"))
++    assert len(_collect_kanban_notifications(right)) == 1
++    assert not notification_inbox.inspect(inbox_home, SESSION_KEY)
++    assert len(notification_inbox.inspect(inbox_home / "right-agent", SESSION_KEY)) == 1
+diff --git a/tests/tui_gateway/test_notification_compression.py b/tests/tui_gateway/test_notification_compression.py
+new file mode 100644
+index 0000000..e02081b
+--- /dev/null
++++ b/tests/tui_gateway/test_notification_compression.py
+@@ -0,0 +1,141 @@
++"""Long-chat compression must not strand or leak specialist return routes."""
++import threading
++
++import pytest
++
++from hermes_cli import kanban_db as kb
++from hermes_state import SessionDB
++from tui_gateway import notification_inbox as inbox, server
++
++
++@pytest.fixture
++def conversation(tmp_path):
++    home = tmp_path / "operator"
++    home.mkdir()
++    db = SessionDB(db_path=home / "state.db")
++    db.create_session("origin", source="desktop")
++    yield home, db
++    db.close()
++
++
++def compress(db, parent="origin", child="continuation"):
++    db.end_session(parent, "compression")
++    db.create_session(child, source="desktop", parent_session_id=parent)
++
++
++def subscribed_task():
++    conn = kb.connect()
++    try:
++        task = kb.create_task(conn, title="long-running specialist", assignee="worker")
++        kb.add_notify_sub(conn, task_id=task, platform="tui", chat_id="origin", delivery_mode="notify+wake")
++        kb.complete_task(conn, task, summary="result after compression")
++        return task
++    finally:
++        conn.close()
++
++
++def test_completion_after_compression_reaches_continuation(conversation):
++    home, db = conversation
++    task = subscribed_task()
++    compress(db)
++    session = {"session_key": "continuation", "profile_home": str(home)}
++    texts = server._collect_kanban_notifications(session)
++    assert len(texts) == 1 and task in texts[0]
++    assert len(inbox.inspect(home, "origin")) == 1
++    assert server._collect_kanban_notifications(session) == []
++
++
++def test_busy_delivery_is_found_after_cold_resume_of_compressed_chat(conversation, monkeypatch):
++    home, db = conversation
++    subscribed_task()
++    server._collect_kanban_notifications({"session_key": "origin", "profile_home": str(home)})
++    compress(db)
++    session = {"session_key": "continuation", "profile_home": str(home),
++               "running": False, "history_lock": threading.Lock()}
++    stop, submissions = threading.Event(), []
++    monkeypatch.setattr(server, "_maybe_fire_tui_loop_tick", lambda *args: None, raising=False)
++    monkeypatch.setattr(server, "_auto_continue_config", lambda: (True, 900, 2))
++    monkeypatch.setattr(server, "_emit", lambda *args: None)
++
++    def submit(*args, **kwargs):
++        submissions.append(kwargs["kanban_batch"])
++        stop.set()
++
++    # Bound a regression failure: never leave a poller running indefinitely.
++    timer = threading.Timer(3, stop.set)
++    monkeypatch.setattr(server, "_run_prompt_submit", submit)
++    timer.start()
++    try:
++        server._notification_poller_loop(stop, "runtime", session)
++    finally:
++        timer.cancel()
++    assert len(submissions) == 1
++    assert submissions[0][0]["session_key"] == "origin"
++
++
++def test_old_live_session_does_not_collect_after_rotation(conversation):
++    home, db = conversation
++    subscribed_task()
++    compress(db)
++    assert server._collect_kanban_notifications({"session_key": "origin", "profile_home": str(home)}) == []
++    assert inbox.inspect(home, "origin") == []
++
++
++def test_finished_receipt_keeps_identity_across_multiple_compressions(conversation):
++    home, db = conversation
++    task = subscribed_task()
++    original = {"session_key": "origin", "profile_home": str(home)}
++    server._collect_kanban_notifications(original)
++    batch = inbox.claim(home, "origin")
++    assert inbox.start(home, "origin", batch)
++    inbox.finish(home, "origin", batch, "complete")
++    delivery_id = batch[0]["id"]
++    compress(db)
++    compress(db, "continuation", "latest")
++    conn = kb.connect()
++    try:
++        # Simulate replay after a lost board cursor. The durable ID must not
++        # change just because the operator now occupies another continuation.
++        conn.execute("UPDATE kanban_notify_subs SET last_event_id=0 WHERE task_id=?", (task,))
++        assert server._collect_kanban_notifications({"session_key": "latest", "profile_home": str(home)}) == []
++        assert kb.list_notify_subs(conn, task_id=task)[0]["last_event_id"] > 0
++    finally:
++        conn.close()
++    rows = inbox.inspect(home, "origin")
++    assert len(rows) == 1 and rows[0]["id"] == delivery_id and rows[0]["state"] == "finished"
++    assert db.get_compression_delivery_keys("latest") == ["latest", "continuation", "origin"]
++
++
++def test_a_compressed_branch_inherits_only_its_own_tasks(conversation):
++    _home, db = conversation
++    db.end_session("origin", "compression")
++    db.create_session("branch", source="desktop", parent_session_id="origin",
++                      model_config={"_branched_from": "origin"})
++    compress(db, "branch", "branch-tip")
++    assert db.get_compression_delivery_keys("branch-tip") == ["branch-tip", "branch"]
++
++
++def test_recipient_lookup_does_not_create_a_missing_profile(tmp_path):
++    home = tmp_path / "missing-profile"
++    assert server._notification_recipient_keys({"session_key": "lazy", "profile_home": str(home)}) == ["lazy"]
++    assert not home.exists()
++
++
++@pytest.mark.parametrize("kind", ["branch", "delegate", "tool", "ordinary-child", "other-profile"])
++def test_non_continuations_cannot_inherit_return_routes(conversation, tmp_path, kind):
++    home, db = conversation
++    subscribed_task()
++    if kind != "ordinary-child":
++        db.end_session("origin", "compression")
++    metadata = {"_branched_from": "origin"} if kind == "branch" else (
++        {"_delegate_from": "origin"} if kind == "delegate" else None)
++    db.create_session("unrelated", source="tool" if kind == "tool" else "desktop",
++                      parent_session_id="origin", model_config=metadata)
++    if kind == "other-profile":
++        home = tmp_path / "other-profile"
++        home.mkdir()
++        other = SessionDB(db_path=home / "state.db")
++        other.create_session("unrelated", source="desktop")
++        other.close()
++    assert server._collect_kanban_notifications({"session_key": "unrelated", "profile_home": str(home)}) == []
++    assert inbox.inspect(home, "origin") == []
+diff --git a/tests/tui_gateway/test_notification_inbox.py b/tests/tui_gateway/test_notification_inbox.py
+new file mode 100644
+index 0000000..fd571b3
+--- /dev/null
++++ b/tests/tui_gateway/test_notification_inbox.py
+@@ -0,0 +1,184 @@
++import concurrent.futures
++import json
++import os
++import sqlite3
++import subprocess
++import sys
++
++import pytest
++
++from tui_gateway import notification_inbox as inbox
++
++
++def test_existing_inbox_is_upgraded_without_losing_pending_work(tmp_path):
++    directory = tmp_path / "sessions"
++    directory.mkdir()
++    with sqlite3.connect(directory / "notification_inbox.db") as conn:
++        conn.execute("""CREATE TABLE deliveries (
++            id TEXT PRIMARY KEY, session_key TEXT NOT NULL, text TEXT NOT NULL,
++            state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
++            owner TEXT, pid INTEGER, pid_started REAL, lease_until REAL, created_at REAL NOT NULL,
++            updated_at REAL NOT NULL, outcome TEXT
++        )""")
++        conn.execute("INSERT INTO deliveries(id,session_key,text,created_at,updated_at) VALUES(?,?,?,?,?)",
++                     ("old", "operator", "existing result", 1, 1))
++    batch = inbox.claim(tmp_path, "operator")
++    assert batch[0]["text"] == "existing result"
++    assert json.loads(batch[0]["metadata"]) == {}
++    assert inbox.start(tmp_path, "operator", batch)
++    inbox.finish(tmp_path, "operator", batch, "complete")
++    assert not inbox.stage(tmp_path, "operator", "old", "existing result")
++
++
++def test_task_attribution_survives_lease_recovery_and_is_retired(tmp_path):
++    metadata = {"task_id": "t_1", "board": "team", "worker": "researcher"}
++    inbox.stage(tmp_path, "operator", "id", "done", metadata=metadata)
++    first = inbox.claim(tmp_path, "operator")
++    assert json.loads(first[0]["metadata"]) == metadata
++    inbox.release(tmp_path, "operator", first)
++    second = inbox.claim(tmp_path, "operator")
++    assert json.loads(second[0]["metadata"]) == metadata
++    assert inbox.start(tmp_path, "operator", second)
++    inbox.finish(tmp_path, "operator", second, "complete")
++    assert inbox.inspect(tmp_path, "operator")[0]["metadata"] == "{}"
++
++
++def test_stage_deduplicates_even_after_completed_delivery(tmp_path):
++    assert inbox.stage(tmp_path, "operator", "id", "@specialist done")
++    batch = inbox.claim(tmp_path, "operator")
++    assert inbox.start(tmp_path, "operator", batch)
++    inbox.finish(tmp_path, "operator", batch, "complete")
++    assert not inbox.stage(tmp_path, "operator", "id", "@specialist done")
++    assert not inbox.claim(tmp_path, "operator")
++    assert inbox.inspect(tmp_path, "operator")[0]["outcome"] == "complete"
++
++
++def test_private_profile_and_conversation_boundaries(tmp_path):
++    inbox.stage(tmp_path / "a", "operator-a", "id", "private")
++    assert not inbox.claim(tmp_path / "b", "operator-a")
++    assert not inbox.claim(tmp_path / "a", "operator-b")
++    batch = inbox.claim(tmp_path / "a", "operator-a")
++    assert not inbox.start(tmp_path / "a", "operator-b", batch)
++    assert inbox.start(tmp_path / "a", "operator-a", batch)
++
++
++def test_concurrent_pollers_have_one_owner(tmp_path):
++    inbox.stage(tmp_path, "operator", "id", "done")
++    with concurrent.futures.ThreadPoolExecutor(2) as pool:
++        batches = list(pool.map(lambda _: inbox.claim(tmp_path, "operator"), range(2)))
++    assert sorted(map(len, batches)) == [0, 1]
++
++
++def test_expired_lease_cannot_start_or_finish_replacement(tmp_path, monkeypatch):
++    inbox.stage(tmp_path, "operator", "id", "done")
++    now = inbox.time.time()
++    old = inbox.claim(tmp_path, "operator")
++    monkeypatch.setattr(inbox.time, "time", lambda: now + 61)
++    new = inbox.claim(tmp_path, "operator")
++    assert not inbox.start(tmp_path, "operator", old)
++    assert inbox.start(tmp_path, "operator", new)
++    inbox.finish(tmp_path, "operator", old, "error")
++    assert inbox.inspect(tmp_path, "operator")[0]["state"] == "running"
++
++
++def test_live_running_owner_never_replayed_on_timer(tmp_path, monkeypatch):
++    inbox.stage(tmp_path, "operator", "id", "done")
++    batch = inbox.claim(tmp_path, "operator")
++    assert inbox.start(tmp_path, "operator", batch)
++    now = inbox.time.time()
++    monkeypatch.setattr(inbox.time, "time", lambda: now + 99999)
++    assert not inbox.claim(tmp_path, "operator")
++
++
++def test_dead_owner_recovery_is_bounded(tmp_path, monkeypatch):
++    inbox.stage(tmp_path, "operator", "id", "done")
++    monkeypatch.setattr(inbox, "_owner_alive", lambda *args: False)
++    for attempt in range(3):
++        batch = inbox.claim(tmp_path, "operator")
++        assert batch[0]["attempts"] == attempt
++        assert inbox.start(tmp_path, "operator", batch)
++    assert not inbox.claim(tmp_path, "operator")
++    assert inbox.blocked(tmp_path, "operator")[0]["id"] == "id"
++
++
++@pytest.mark.parametrize("settings", [
++    {"recover_running": False}, {"max_recoveries": 0}, {"freshness_seconds": -1},
++])
++def test_recovery_respects_disabled_stale_and_retry_settings(tmp_path, monkeypatch, settings):
++    inbox.stage(tmp_path, "operator", "id", "done")
++    batch = inbox.claim(tmp_path, "operator")
++    assert inbox.start(tmp_path, "operator", batch)
++    monkeypatch.setattr(inbox, "_owner_alive", lambda *args: False)
++    assert not inbox.claim(tmp_path, "operator", **settings)
++    assert inbox.blocked(tmp_path, "operator")
++
++
++def test_release_before_start_spends_no_model_attempt(tmp_path):
++    inbox.stage(tmp_path, "operator", "id", "done")
++    old = inbox.claim(tmp_path, "operator")
++    inbox.release(tmp_path, "operator", old)
++    new = inbox.claim(tmp_path, "operator")
++    assert new[0]["attempts"] == 0
++    assert not inbox.start(tmp_path, "operator", old)
++
++
++def test_cancelled_or_handled_error_is_not_automatically_retried(tmp_path):
++    for outcome in ("interrupted", "error"):
++        inbox.stage(tmp_path, "operator", outcome, "done")
++        batch = inbox.claim(tmp_path, "operator")
++        assert inbox.start(tmp_path, "operator", batch)
++        inbox.finish(tmp_path, "operator", batch, outcome)
++        assert not inbox.claim(tmp_path, "operator")
++
++
++def test_real_process_death_recovers_persisted_started_work(tmp_path):
++    code = (
++        "from tui_gateway import notification_inbox as i; import sys, os; "
++        "h=sys.argv[1]; i.stage(h,'operator','id','done'); "
++        "b=i.claim(h,'operator'); assert i.start(h,'operator',b); os._exit(9)"
++    )
++    proc = subprocess.run([sys.executable, "-c", code, str(tmp_path)], check=False)
++    assert proc.returncode == 9
++    batch = inbox.claim(tmp_path, "operator")
++    assert batch[0]["attempts"] == 1
++    assert inbox.start(tmp_path, "operator", batch)
++    inbox.finish(tmp_path, "operator", batch, "complete")
++    assert not inbox.claim(tmp_path, "operator")
++
++
++def test_file_is_owner_only_on_posix(tmp_path):
++    if os.name == "posix":
++        inbox.stage(tmp_path, "operator", "id", "private")
++        assert (tmp_path / "sessions/notification_inbox.db").stat().st_mode & 0o077 == 0
++
++
++def test_pid_reuse_is_not_mistaken_for_live_owner():
++    process = inbox.psutil.Process(os.getpid())
++    assert inbox._owner_alive(os.getpid(), process.create_time())
++    assert not inbox._owner_alive(os.getpid(), process.create_time() - 10)
++
++
++def test_empty_poll_does_not_create_a_database(tmp_path):
++    assert inbox.claim(tmp_path, "operator") == []
++    assert inbox.blocked(tmp_path, "operator") == []
++    assert not (tmp_path / "sessions").exists()
++
++
++def test_full_backlog_fails_without_discarding_work(tmp_path, monkeypatch):
++    monkeypatch.setattr(inbox, "_MAX_PENDING", 1)
++    inbox.stage(tmp_path, "operator", "id", "done")
++    assert not inbox.stage(tmp_path, "operator", "id", "duplicate")
++    with pytest.raises(RuntimeError, match="backlog"):
++        inbox.stage(tmp_path, "operator", "next", "must not discard")
++    assert len(inbox.inspect(tmp_path, "operator")) == 1
++
++
++def test_profile_clone_does_not_copy_workflow_history(tmp_path):
++    import shutil
++    from hermes_cli.profiles import _clone_all_copytree_ignore
++
++    source, destination = tmp_path / "source", tmp_path / "clone"
++    inbox.stage(source, "operator", "id", "private task result")
++    shutil.copytree(source, destination, ignore=_clone_all_copytree_ignore(source))
++    assert not inbox.inspect(destination, "operator")
++    assert inbox.inspect(source, "operator")[0]["text"] == "private task result"
+diff --git a/tests/tui_gateway/test_notification_modes.py b/tests/tui_gateway/test_notification_modes.py
+new file mode 100644
+index 0000000..76b681a
+--- /dev/null
++++ b/tests/tui_gateway/test_notification_modes.py
+@@ -0,0 +1,126 @@
++"""Passive task notices must remain durable without starting model/tool work."""
++import threading
++
++import pytest
++
++from hermes_cli import kanban_db as kb
++from hermes_state import SessionDB
++from tui_gateway import notification_inbox as inbox, server
++
++
++@pytest.mark.parametrize("mode", ["notify", "notify+wake", "wake"])
++def test_poller_honors_subscription_delivery_mode(tmp_path, monkeypatch, mode):
++    home = tmp_path / "receiver"
++    home.mkdir()
++    db = SessionDB(db_path=home / "state.db")
++    db.create_session("recipient", source="desktop")
++    conn = kb.connect()
++    task = kb.create_task(conn, title="synthetic result", assignee="specialist")
++    kb.add_notify_sub(conn, task_id=task, platform="tui", chat_id="recipient", delivery_mode=mode)
++    kb.complete_task(conn, task, summary="passive result must not execute")
++    conn.close()
++    session = {"session_key": "recipient", "profile_home": str(home), "running": False,
++               "history": [], "history_lock": threading.Lock()}
++    stop, turns, events = threading.Event(), [], []
++    monkeypatch.setattr(server, "_auto_continue_config", lambda: (True, 900, 2))
++
++    def emit(kind, sid, payload=None):
++        events.append((kind, payload))
++        if mode == "notify" and kind == "status.update" and payload.get("kind") == "task_delivery":
++            stop.set()
++
++    def submit(*args, **kwargs):
++        turns.append(kwargs)
++        stop.set()
++
++    monkeypatch.setattr(server, "_emit", emit)
++    monkeypatch.setattr(server, "_run_prompt_submit", submit)
++    timer = threading.Timer(3, stop.set)
++    timer.start()
++    try:
++        server._notification_poller_loop(stop, "runtime", session)
++        if mode == "notify":
++            assert turns == []
++            rows = db.get_messages("recipient")
++            assert len(rows) == 1
++            assert rows[0]["display_kind"] == "kanban_notification"
++            assert task in rows[0]["content"]
++            receipt = inbox.inspect(home, "recipient")[0]
++            assert receipt["state"] == "finished" and receipt["attempts"] == 0
++            assert not session["running"]
++            assert not any(kind == "message.start" for kind, _ in events)
++        else:
++            assert len(turns) == 1
++            if mode == "wake":
++                assert not any(kind == "status.update" for kind, _ in events)
++    finally:
++        timer.cancel()
++        db.close()
++
++
++def test_passive_receipts_cannot_start_a_model_turn_or_mix_into_an_active_batch(tmp_path):
++    inbox.stage(tmp_path, "recipient", "passive", "information", delivery_mode="notify")
++    inbox.stage(tmp_path, "recipient", "active", "continue", delivery_mode="notify+wake")
++    passive = inbox.claim(tmp_path, "recipient")
++    assert [row["id"] for row in passive] == ["passive"]
++    assert not inbox.start(tmp_path, "recipient", passive)
++    active = inbox.claim(tmp_path, "recipient")
++    assert [row["id"] for row in active] == ["active"]
++    assert inbox.start(tmp_path, "recipient", active)
++    inbox.acknowledge_notice(tmp_path, "recipient", passive)
++    assert inbox.inspect(tmp_path, "recipient")[0]["attempts"] == 0
++
++
++def test_passive_replay_after_append_before_ack_and_compression_is_not_duplicated(tmp_path, monkeypatch):
++    db = SessionDB(db_path=tmp_path / "state.db")
++    db.create_session("origin", source="desktop")
++    inbox.stage(tmp_path, "origin", "notice", "specialist result", delivery_mode="notify")
++    first = inbox.claim(tmp_path, "origin")
++    session = {"session_key": "origin", "profile_home": str(tmp_path), "running": True,
++               "history": [], "history_lock": threading.Lock()}
++    events = []
++    monkeypatch.setattr(server, "_emit", lambda *args: events.append(args))
++    with monkeypatch.context() as fault:
++        fault.setattr(inbox, "acknowledge_notice", lambda *args: (_ for _ in ()).throw(OSError("interrupted ack")))
++        with pytest.raises(OSError, match="interrupted ack"):
++            server._persist_passive_task_notices("runtime", session, first)
++    # The poller's pre-start failure path releases the lease. Recovery may now
++    # resume at a new compression continuation, with no live history cache.
++    inbox.release(tmp_path, "origin", first)
++    db.end_session("origin", "compression")
++    db.create_session("tip", source="desktop", parent_session_id="origin")
++    session.update(session_key="tip", history=[], running=True)
++    server._persist_passive_task_notices("runtime", session, inbox.claim(tmp_path, "origin"))
++    try:
++        assert len(db.get_messages("origin")) == 1
++        assert db.get_messages("tip") == []
++        assert len(session["history"]) == 1
++        assert inbox.inspect(tmp_path, "origin")[0]["state"] == "finished"
++        assert inbox.inspect(tmp_path, "origin")[0]["attempts"] == 0
++        assert not inbox.claim(tmp_path, "origin")
++        assert len(events) == 2  # Same stable ID lets the renderer deduplicate replay.
++        assert events[0][2]["display_metadata"]["delivery_ids"] == events[1][2]["display_metadata"]["delivery_ids"]
++    finally:
++        db.close()
++
++
++@pytest.mark.parametrize("condition", ["stopped", "foreign"])
++def test_passive_delivery_cannot_write_after_stop_or_into_an_unrelated_conversation(tmp_path, monkeypatch, condition):
++    db = SessionDB(db_path=tmp_path / "state.db")
++    db.create_session("origin", source="desktop")
++    db.create_session("foreign", source="desktop")
++    inbox.stage(tmp_path, "origin", "notice", "private result", delivery_mode="notify")
++    batch = inbox.claim(tmp_path, "origin")
++    session = {"session_key": "foreign" if condition == "foreign" else "origin",
++               "profile_home": str(tmp_path), "running": True, "history_lock": threading.Lock(),
++               "_turn_cancel_requested": condition == "stopped"}
++    events = []
++    monkeypatch.setattr(server, "_emit", lambda *args: events.append(args))
++    try:
++        server._persist_passive_task_notices("runtime", session, batch)
++        assert not events
++        assert not db.get_messages("origin") and not db.get_messages("foreign")
++        assert inbox.inspect(tmp_path, "origin")[0]["state"] == "pending"
++        assert not session["running"]
++    finally:
++        db.close()
+diff --git a/tests/tui_gateway/test_orgo_task_result_turn.py b/tests/tui_gateway/test_orgo_task_result_turn.py
+new file mode 100644
+index 0000000..8eef5ec
+--- /dev/null
++++ b/tests/tui_gateway/test_orgo_task_result_turn.py
+@@ -0,0 +1,300 @@
++"""Crash-interrupted turns auto-continue on the next session.resume.
++
++A turn's durable marker (tui_gateway/turn_marker.py) is written when the turn
++starts running and cleared when it concludes — success, handled error, or
++interrupt. Only a process death leaves it behind, so a marker found at resume
++time is positive proof the turn never finished. Contract pinned here:
++
++* the marker module round-trips, prunes stale entries, and tolerates a
++  corrupt sidecar;
++* ``_run_prompt_submit`` writes the marker before the turn and clears it in
++  the ``finally`` on both the success and exception paths (a handled failure
++  is a concluded turn — its terminal frame + retained snapshot own recovery);
++* ``_maybe_schedule_auto_continue`` re-submits a fresh interrupted prompt as
++  a continuation note (display_kind ``auto_continue``), refuses stale /
++  disabled / crash-looping / already-running cases, and bounds attempts via
++  the marker's attempt counter.
++"""
++
++from __future__ import annotations
++
++import threading
++import time
++import types
++
++import pytest
++
++from tui_gateway import server
++from tui_gateway.turn_marker import (
++    clear_turn_marker,
++    read_turn_marker,
++    record_turn_start,
++)
++
++
++class _InlineThread:
++    """Run threads synchronously so tests observe final state."""
++
++    def __init__(self, target=None, daemon=None, args=(), kwargs=None):
++        self._target = target
++        self._args = args
++        self._kwargs = kwargs or {}
++
++    def start(self):
++        if self._target is not None:
++            self._target(*self._args, **self._kwargs)
++
++    def is_alive(self):
++        return False
++
++    def join(self, timeout=None):
++        return None
++
++
++def _session(agent=None, **extra):
++    return {
++        "agent": agent if agent is not None else types.SimpleNamespace(),
++        "session_key": "session-key",
++        "history": [],
++        "history_lock": threading.Lock(),
++        "history_version": 0,
++        "running": False,
++        "attached_images": [],
++        "image_counter": 0,
++        "cols": 80,
++        "slash_worker": None,
++        "show_reasoning": False,
++        "tool_progress_mode": "all",
++        "inflight_turn": None,
++        **extra,
++    }
++
++
++@pytest.fixture()
++def emits(monkeypatch):
++    captured: list = []
++    monkeypatch.setattr(
++        server,
++        "_emit",
++        lambda event, sid, payload=None: captured.append((event, sid, payload)),
++    )
++    return captured
++
++
++@pytest.fixture()
++def marker_home(monkeypatch, tmp_path):
++    """Point the server's marker storage at a temp HERMES_HOME."""
++    monkeypatch.setattr(server, "_hermes_home", tmp_path)
++    return tmp_path
++
++
++@pytest.fixture()
++def turn_env(monkeypatch, tmp_path, marker_home):
++    """Neutralize the turn pipeline's environment-heavy side paths."""
++    monkeypatch.setattr(server.threading, "Thread", _InlineThread)
++    monkeypatch.setattr(server, "_wire_callbacks", lambda sid: None)
++    monkeypatch.setattr(server, "_sync_agent_model_with_config", lambda sid, session: None)
++    monkeypatch.setattr(server, "_session_cwd", lambda session: str(tmp_path))
++    monkeypatch.setattr(server, "_register_session_cwd", lambda session: None)
++    monkeypatch.setattr(server, "_tts_stream_begin", lambda: None)
++    monkeypatch.setattr(server, "_sync_session_key_after_compress", lambda *a, **k: None)
++    monkeypatch.setattr(server, "_get_usage", lambda agent: {})
++
++
++@pytest.mark.parametrize("outcome", ["complete", "error", "interrupted", "exception"])
++def test_task_result_turn_checkpoints_before_model_and_settles_once(
++    emits, turn_env, marker_home, outcome,
++):
++    from tui_gateway import notification_inbox as inbox
++
++    inbox.stage(marker_home, "session-key", "delivery-1", "specialist result")
++    batch = inbox.claim(marker_home, "session-key")
++    observed = []
++
++    def run(message, **kwargs):
++        observed.append(inbox.inspect(marker_home, "session-key")[0]["state"])
++        assert any(event == "status.update" and payload.get("kind") == "task_delivery"
++                   for event, _sid, payload in emits)
++        # The inbox owns recovery; the generic auto-continue path must not
++        # independently schedule the same interrupted task-result turn.
++        assert read_turn_marker(marker_home, "session-key") is None
++        if outcome == "exception":
++            raise RuntimeError("provider failed")
++        return {"final_response": "acknowledged", "error": "failed" if outcome == "error" else None,
++                "interrupted": outcome == "interrupted"}
++
++    agent = types.SimpleNamespace(session_id="session-key", run_conversation=run)
++    session = _session(agent=agent, running=True)
++    server._run_prompt_submit("rid", "sid", session, "specialist result", kanban_batch=batch)
++    assert observed == ["running"]
++    row = inbox.inspect(marker_home, "session-key")[0]
++    assert row["state"] == "finished"
++    assert row["outcome"] == ("error" if outcome == "exception" else outcome)
++    assert not inbox.claim(marker_home, "session-key")
++    assert not session["running"]
++
++
++def test_expired_task_result_lease_never_reaches_model(emits, turn_env, marker_home):
++    from tui_gateway import notification_inbox as inbox
++
++    inbox.stage(marker_home, "session-key", "delivery-1", "result")
++    batch = inbox.claim(marker_home, "session-key")
++    inbox.release(marker_home, "session-key", batch)
++    observed = []
++    agent = types.SimpleNamespace(session_id="session-key", run_conversation=lambda *a, **k: observed.append(a))
++    session = _session(agent=agent, running=True)
++    server._run_prompt_submit("rid", "sid", session, "result", kanban_batch=batch)
++    assert not observed
++    assert not session["running"]
++    assert inbox.inspect(marker_home, "session-key")[0]["state"] == "pending"
++
++
++@pytest.mark.parametrize("flag", ["_turn_cancel_requested", "_finalized"])
++def test_stopped_session_does_not_start_a_leased_notification(emits, turn_env, marker_home, flag):
++    from tui_gateway import notification_inbox as inbox
++
++    inbox.stage(marker_home, "session-key", "delivery", "result")
++    batch = inbox.claim(marker_home, "session-key")
++    observed = []
++    agent = types.SimpleNamespace(run_conversation=lambda *a, **k: observed.append(a))
++    session = _session(agent=agent, running=True, **{flag: True})
++    server._run_prompt_submit("rid", "sid", session, "result", kanban_batch=batch)
++    assert not observed
++    assert inbox.inspect(marker_home, "session-key")[0]["attempts"] == 0
++    assert inbox.inspect(marker_home, "session-key")[0]["state"] == "pending"
++    assert not session["running"]
++
++
++@pytest.mark.parametrize("compressed", [False, True])
++def test_admission_refusal_releases_notification_without_starting_model(
++    emits, turn_env, marker_home, monkeypatch, compressed,
++):
++    from tui_gateway import notification_inbox as inbox
++
++    inbox.stage(marker_home, "session-key", "delivery", "result")
++    current_key = "session-key"
++    if compressed:
++        from hermes_state import SessionDB
++
++        db = SessionDB(db_path=marker_home / "state.db")
++        db.create_session(current_key, source="desktop")
++        db.end_session(current_key, "compression")
++        db.create_session("continuation", source="desktop", parent_session_id=current_key)
++        db.close()
++        current_key = "continuation"
++    stop = threading.Event()
++
++    def refuse(sid, session):
++        stop.set()
++        return "conversation owned by another backend"
++
++    monkeypatch.setattr(server, "_ensure_active_session_slot", refuse)
++    monkeypatch.setattr(server, "_collect_kanban_notifications", lambda session: [])
++    observed = []
++    session = _session(agent=types.SimpleNamespace(run_conversation=lambda *a, **k: observed.append(a)))
++    session["session_key"] = current_key
++    server._notification_poller_loop(stop, "sid", session)
++    assert not observed
++    row = inbox.inspect(marker_home, "session-key")[0]
++    assert row["state"] == "pending" and row["attempts"] == 0
++    assert not session["running"]
++
++
++@pytest.mark.parametrize("stopped", [False, True])
++def test_compressed_task_delivery_settles_or_releases_its_original_receipt(
++    emits, turn_env, marker_home, stopped,
++):
++    from hermes_state import SessionDB
++    from tui_gateway import notification_inbox as inbox
++
++    db = SessionDB(db_path=marker_home / "state.db")
++    db.create_session("original", source="desktop")
++    db.end_session("original", "compression")
++    db.create_session("current", source="desktop", parent_session_id="original")
++    db.close()
++    inbox.stage(marker_home, "original", "compressed-result", "specialist result")
++    batch = inbox.claim(marker_home, "original")
++    observed = []
++
++    def run(message, **kwargs):
++        observed.append(inbox.inspect(marker_home, "original")[0]["state"])
++        return {"final_response": "acknowledged"}
++
++    session = _session(agent=types.SimpleNamespace(session_id="current", run_conversation=run),
++                       session_key="current", running=True, _turn_cancel_requested=stopped)
++    server._run_prompt_submit("rid", "sid", session, "specialist result", kanban_batch=batch)
++    row = inbox.inspect(marker_home, "original")[0]
++    assert row["state"] == ("pending" if stopped else "finished")
++    assert row["attempts"] == (0 if stopped else 1)
++    assert observed == ([] if stopped else ["running"])
++    assert not inbox.inspect(marker_home, "current")
++    assert not session["running"]
++
++
++def test_existing_terminal_callback_receives_result(emits, turn_env, marker_home):
++    from tui_gateway import notification_inbox as inbox
++
++    inbox.stage(marker_home, "session-key", "delivery", "result")
++    batch = inbox.claim(marker_home, "session-key")
++    receipts = []
++    agent = types.SimpleNamespace(session_id="session-key", run_conversation=lambda *a, **k: {"final_response": "done"})
++    session = _session(agent=agent, running=True)
++    assert server._run_prompt_submit("rid", "sid", session, "result", kanban_batch=batch,
++                                     terminal_callback=receipts.append)
++    assert receipts == [{"status": "settled", "text": "done"}]
++    assert inbox.inspect(marker_home, "session-key")[0]["outcome"] == "complete"
++
++
++def test_gateway_turn_process_death_recovers_without_duplicate_marker(
++    emits, turn_env, marker_home,
++):
++    import subprocess
++    import sys
++    import textwrap
++    from tui_gateway import notification_inbox as inbox
++
++    # Kill a disposable gateway turn at its model-call boundary, not the user's
++    # gateway. The parent gets no child memory, only the persisted inbox.
++    code = textwrap.dedent("""
++        import os, sys, threading, types
++        from pathlib import Path
++        from tui_gateway import server as s, notification_inbox as i
++        h = Path(sys.argv[1])
++        s._hermes_home = h
++        for name in ('_wire_callbacks', '_sync_agent_model_with_config',
++                     '_register_session_cwd', '_sync_session_key_after_compress'):
++            setattr(s, name, lambda *a, **k: None)
++        s._session_cwd = lambda session: str(h)
++        s._tts_stream_begin = lambda: None
++        s._get_usage = lambda agent: {}
++        s._emit = lambda *a, **k: None
++        s._load_cfg = lambda: {}
++        i.stage(h, 'session-key', 'crash-test', 'specialist result')
++        batch = i.claim(h, 'session-key')
++        def run(message, **kwargs):
++            os._exit(9)
++        agent = types.SimpleNamespace(session_id='session-key', run_conversation=run)
++        session = dict(agent=agent, session_key='session-key', history=[],
++                       history_lock=threading.Lock(), history_version=0, running=True,
++                       attached_images=[], image_counter=0, cols=80, slash_worker=None,
++                       show_reasoning=False, tool_progress_mode='all', inflight_turn=None)
++        s._run_prompt_submit('rid', 'sid', session, 'specialist result', kanban_batch=batch)
++        session['_run_thread'].join(20)
++        raise SystemExit(4)
++    """)
++    proc = subprocess.run([sys.executable, "-c", code, str(marker_home)], timeout=30, check=False)
++    assert proc.returncode == 9
++    assert read_turn_marker(marker_home, "session-key") is None
++    recovered = inbox.claim(marker_home, "session-key")
++    assert recovered[0]["attempts"] == 1
++    observed = []
++
++    def run(message, **kwargs):
++        observed.append(message)
++        return {"final_response": "reconciled and acknowledged"}
++
++    session = _session(agent=types.SimpleNamespace(session_id="session-key", run_conversation=run), running=True)
++    server._run_prompt_submit("rid", "sid", session, "reconcile result", kanban_batch=recovered)
++    assert observed == ["reconcile result"]
++    assert inbox.inspect(marker_home, "session-key")[0]["outcome"] == "complete"
++    assert not inbox.claim(marker_home, "session-key")
+diff --git a/tools/kanban_tools.py b/tools/kanban_tools.py
+index dd1db3e..c6d9f99 100644
+--- a/tools/kanban_tools.py
++++ b/tools/kanban_tools.py
+@@ -1389,11 +1389,13 @@ def _handle_create(args: dict, **kw) -> str:
+     # constructed in-process (agent_init calls set_current_session_id), which
+     # would stamp — and later wake — the wrong session.
+     from tools.async_delegation import _current_origin_session_id
++    from gateway.session_context import get_session_env
+ 
+     session_id = (
+         args.get("session_id")
+         or _current_origin_session_id()
+-        or os.environ.get("HERMES_SESSION_ID")
++        or get_session_env("HERMES_SESSION_ID", "")
++        or None
+     )
+     priority = args.get("priority")
+     # Resolve workspace. Workspace sharing is always explicit: omitted fields
+@@ -1416,6 +1418,13 @@ def _handle_create(args: dict, **kw) -> str:
+         return tool_error(bool_error)
+     idempotency_key = args.get("idempotency_key")
+     max_runtime_seconds = args.get("max_runtime_seconds")
++    max_retries = args.get("max_retries")
++    if max_retries is not None and (
++        isinstance(max_retries, bool)
++        or not isinstance(max_retries, int)
++        or max_retries < 1
++    ):
++        return tool_error("max_retries must be an integer >= 1 (1 means no automatic retries)")
+     initial_status = args.get("initial_status") or "running"
+     skills = args.get("skills")
+     if isinstance(skills, str):
+@@ -1453,7 +1462,7 @@ def _handle_create(args: dict, **kw) -> str:
+                     if _self_task is not None and _self_task.project_id:
+                         project_id = _self_task.project_id
+                         project_source_task_id = _self_task.id
+-            new_tid = kb.create_task(
++            new_tid, subscribed = _create_task_with_notification(
+                 conn,
+                 title=str(title).strip(),
+                 body=body,
+@@ -1471,6 +1480,7 @@ def _handle_create(args: dict, **kw) -> str:
+                     int(max_runtime_seconds)
+                     if max_runtime_seconds is not None else None
+                 ),
++                max_retries=max_retries,
+                 skills=skills,
+                 model_override=model_override,
+                 provider_override=provider_override,
+@@ -1483,7 +1493,6 @@ def _handle_create(args: dict, **kw) -> str:
+                 session_id=session_id,
+             )
+             new_task = kb.get_task(conn, new_tid)
+-            subscribed = _maybe_auto_subscribe(conn, new_tid)
+             return _ok(
+                 task_id=new_tid,
+                 status=new_task.status if new_task else None,
+@@ -1501,6 +1510,21 @@ def _handle_create(args: dict, **kw) -> str:
+         return tool_error(f"kanban_create: {e}")
+ 
+ 
++def _create_task_with_notification(conn: Any, **task_fields: Any) -> tuple[str, bool]:
++    """Commit a task and its return route together, before any worker sees it.
++
++    Shared by the agent tool and the CLI's explicit ``create --notify`` path.
++    Subscription failures remain best-effort and are surfaced as False; never
++    disguise a committed task as a failed create that should be repeated.
++    """
++    from hermes_cli import kanban_db as kb
++
++    with kb.write_txn(conn):
++        task_id = kb.create_task(conn, **task_fields)
++        subscribed = _maybe_auto_subscribe(conn, task_id)
++    return task_id, subscribed
++
++
+ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
+     """Auto-subscribe the calling session to task completion / block events.
+ 
+@@ -1568,17 +1592,19 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
+             # every CLI invocation, which is exactly the over-eager
+             # behaviour that got #19718 reverted upstream. The TUI
+             # poller keys on HERMES_SESSION_KEY.
+-            session_key = (
+-                get_session_env("HERMES_SESSION_KEY", "")
+-                or os.environ.get("HERMES_SESSION_KEY", "")
+-            )
++            # get_session_env already provides the legacy CLI env fallback.
++            # An explicitly empty ContextVar masks a foreign global mirror;
++            # falling through to os.environ here would defeat that isolation.
++            session_key = get_session_env("HERMES_SESSION_KEY", "")
+             if not session_key:
+                 return False  # CLI / cron / test — no persistent channel
+             platform = "tui"
+             chat_id = session_key
+-        is_gateway_session = platform != "tui"
+         chat_type = get_session_env("HERMES_SESSION_CHAT_TYPE", "") or None
+-        delivery_mode = "notify+wake" if is_gateway_session else None
++        # Automatic delegation returns continue the originating operator on
++        # Desktop too. Record this explicitly instead of interpreting a passive
++        # subscription as permission to run a model turn in the TUI poller.
++        delivery_mode = "notify+wake"
+         thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "") or None
+         user_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
+         user_id_alt = get_session_env("HERMES_SESSION_USER_ID_ALT", "") or None
+@@ -1611,6 +1637,13 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
+ 
+         # Lazy-import to keep the module-level dependency light
+         from hermes_cli import kanban_db as _kb
++        # Task creation is idempotent; repeating it is not a new request to
++        # change a subscription the operator has since made passive. The
++        # enclosing creation transaction serializes this check with writes.
++        if any(sub["platform"] == platform and sub["chat_id"] == chat_id
++               and (sub.get("thread_id") or "") == (thread_id or "")
++               for sub in _kb.list_notify_subs(conn, task_id)):
++            delivery_mode = None
+         _kb.add_notify_sub(
+             conn, task_id=task_id,
+             platform=platform, chat_id=chat_id,
+@@ -2257,6 +2290,17 @@ KANBAN_CREATE_SCHEMA = {
+                     "task with outcome='timed_out'."
+                 ),
+             },
++            "max_retries": {
++                "type": "integer",
++                "minimum": 1,
++                "description": (
++                    "Consecutive-failure limit, including the first attempt. "
++                    "1 stops after the first failure (no automatic retries); "
++                    "3 permits two retries. Omit to use the dispatcher default. "
++                    "Use 1 for work with non-idempotent external effects; "
++                    "a timeout is not proof that no side effect occurred."
++                ),
++            },
+             "initial_status": {
+                 "type": "string",
+                 "enum": ["running", "blocked"],
+diff --git a/tui_gateway/notification_inbox.py b/tui_gateway/notification_inbox.py
+new file mode 100644
+index 0000000..3acd726
+--- /dev/null
++++ b/tui_gateway/notification_inbox.py
+@@ -0,0 +1,223 @@
++"""Durable, profile-local delivery of task results to an operator conversation.
++
++Stage before advancing a board cursor. IDs are deterministic, including board
++and recipient identity; finished rows are retained as deduplication receipts.
++Only pre-start leases can expire. Running work is retried after confirmed owner
++process death, with a reconciliation prompt and a three-start limit. This is
++at-least-once recovery, never an exactly-once guarantee for external actions.
++"""
++
++from __future__ import annotations
++
++import contextlib
++import json
++import os
++import sqlite3
++import time
++import uuid
++from pathlib import Path
++
++import psutil
++
++_MAX_STARTS = 3
++_LEASE_SECONDS = 60
++_MAX_BATCH = 20
++_MAX_PENDING = 10_000
++
++
++@contextlib.contextmanager
++def _connect(home):
++    # Existing profile clone/export rules exclude sessions by default. Do not
++    # put workflow history in a settings directory that clone-all would copy.
++    directory = Path(home) / "sessions"
++    directory.mkdir(parents=True, exist_ok=True)
++    path = directory / "notification_inbox.db"
++    # Create with private permissions before SQLite opens it (no chmod window).
++    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
++    os.close(fd)
++    conn = sqlite3.connect(path, timeout=10, isolation_level=None)
++    conn.row_factory = sqlite3.Row
++    try:
++        conn.execute("PRAGMA synchronous=FULL")
++        conn.execute("""CREATE TABLE IF NOT EXISTS deliveries (
++            id TEXT PRIMARY KEY, session_key TEXT NOT NULL, text TEXT NOT NULL,
++            state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
++            owner TEXT, pid INTEGER, pid_started REAL, lease_until REAL, created_at REAL NOT NULL,
++            updated_at REAL NOT NULL, outcome TEXT
++        )""")
++        conn.execute("CREATE INDEX IF NOT EXISTS delivery_session ON deliveries(session_key, state)")
++        conn.execute("BEGIN IMMEDIATE")
++        if "metadata" not in {row[1] for row in conn.execute("PRAGMA table_info(deliveries)")}:
++            conn.execute("ALTER TABLE deliveries ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'")
++        if "delivery_mode" not in {row[1] for row in conn.execute("PRAGMA table_info(deliveries)")}:
++            # Already-staged legacy deliveries were admitted as active turns.
++            conn.execute("ALTER TABLE deliveries ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'notify+wake'")
++        yield conn
++        conn.execute("COMMIT")
++    except BaseException:
++        if conn.in_transaction:
++            conn.execute("ROLLBACK")
++        raise
++    finally:
++        conn.close()
++
++
++def stage(home, session_key: str, delivery_id: str, text: str, *, metadata: dict | None = None,
++          delivery_mode: str = "notify+wake") -> bool:
++    """Persist before claiming the source cursor; repeated IDs are harmless."""
++    if not session_key or not delivery_id or not text:
++        raise ValueError("notification requires a recipient, id, and text")
++    if delivery_mode not in {"notify", "notify+wake", "wake"}:
++        raise ValueError("invalid notification delivery mode")
++    now = time.time()
++    with _connect(home) as conn:
++        if conn.execute("SELECT 1 FROM deliveries WHERE id=?", (delivery_id,)).fetchone():
++            return False
++        if conn.execute("SELECT COUNT(*) FROM deliveries WHERE state!='finished'").fetchone()[0] >= _MAX_PENDING:
++            # Do not discard oldest work. Fail before the source cursor moves;
++            # delivery resumes after the backlog has been dealt with.
++            raise RuntimeError("Task-result inbox backlog limit reached")
++        cur = conn.execute(
++            "INSERT OR IGNORE INTO deliveries(id,session_key,text,created_at,updated_at,metadata,delivery_mode) "
++            "VALUES(?,?,?,?,?,?,?)",
++            (delivery_id, session_key, text, now, now, json.dumps(metadata or {}, ensure_ascii=True), delivery_mode),
++        )
++        return cur.rowcount == 1
++
++
++def _owner_alive(pid: int | None, started: float | None) -> bool:
++    if not pid:
++        return False
++    try:
++        process = psutil.Process(pid)
++        # PID reuse after a reboot must not strand work behind an unrelated
++        # live process. psutil is the project's cross-platform PID primitive;
++        # unlike os.kill(pid, 0), it is also a safe Windows probe.
++        return process.create_time() == started and process.status() != psutil.STATUS_ZOMBIE
++    except psutil.NoSuchProcess:
++        return False
++    except (psutil.AccessDenied, OSError):
++        return True  # Uncertain ownership is not permission to replay work.
++
++
++def claim(home, session_key: str, *, recover_running: bool = True,
++          freshness_seconds: float = 900, max_recoveries: int = 2) -> list[dict]:
++    """Lease a bounded batch; recover only expired pre-start or dead-owner work."""
++    if not _read(home, session_key, "state IN ('pending','leased','running')"):
++        return []
++    now = time.time()
++    with _connect(home) as conn:
++        rows = conn.execute(
++            "SELECT * FROM deliveries WHERE session_key=? AND state IN ('leased','running')",
++            (session_key,),
++        ).fetchall()
++        for row in rows:
++            recover = (
++                row["state"] == "leased" and row["lease_until"] < now
++            ) or not _owner_alive(row["pid"], row["pid_started"])
++            if recover:
++                interrupted = row["attempts"] > 0
++                blocked = interrupted and (
++                    not recover_running
++                    or now - row["updated_at"] > freshness_seconds
++                    or row["attempts"] >= min(_MAX_STARTS, 1 + max(0, max_recoveries))
++                )
++                state = "blocked" if blocked else "pending"
++                conn.execute(
++                    "UPDATE deliveries SET state=?,owner=NULL,pid=NULL,updated_at=?,outcome=? WHERE id=?",
++                    (state, now, "recovery paused by settings, age, or retry limit" if blocked
++                     else "owner stopped; reconcile before repeating actions", row["id"]),
++                )
++        pending = conn.execute(
++            "SELECT * FROM deliveries WHERE session_key=? AND state='pending' AND delivery_mode="
++            "(SELECT delivery_mode FROM deliveries WHERE session_key=? AND state='pending' "
++            "ORDER BY created_at,id LIMIT 1) ORDER BY created_at,id LIMIT ?",
++            (session_key, session_key, _MAX_BATCH),
++        ).fetchall()
++        lease = uuid.uuid4().hex
++        pid_started = psutil.Process(os.getpid()).create_time()
++        for row in pending:
++            conn.execute(
++                "UPDATE deliveries SET state='leased',owner=?,pid=?,pid_started=?,lease_until=?,updated_at=? WHERE id=?",
++                (lease, os.getpid(), pid_started, now + _LEASE_SECONDS, now, row["id"]),
++            )
++        return [dict(row, lease=lease) for row in pending]
++
++
++def start(home, session_key: str, batch: list[dict]) -> bool:
++    """Checkpoint before any model/tool call; a stale lease cannot start work."""
++    if not batch:
++        return False
++    now = time.time()
++    with _connect(home) as conn:
++        for item in batch:
++            row = conn.execute(
++                "SELECT state,owner,lease_until,delivery_mode FROM deliveries WHERE id=? AND session_key=?",
++                (item["id"], session_key),
++            ).fetchone()
++            if (not row or row["state"] != "leased" or row["owner"] != item["lease"]
++                    or row["lease_until"] < now or row["delivery_mode"] == "notify"):
++                return False
++        for item in batch:
++            conn.execute(
++                "UPDATE deliveries SET state='running',attempts=attempts+1,updated_at=? WHERE id=?",
++                (now, item["id"]),
++            )
++    return True
++
++
++def release(home, session_key: str, batch: list[dict]) -> None:
++    """A dispatch failure before start is safe to retry and spends no attempt."""
++    with _connect(home) as conn:
++        for item in batch:
++            conn.execute(
++                "UPDATE deliveries SET state='pending',owner=NULL,pid=NULL,updated_at=? "
++                "WHERE id=? AND session_key=? AND state='leased' AND owner=?",
++                (time.time(), item["id"], session_key, item["lease"]),
++            )
++
++
++def finish(home, session_key: str, batch: list[dict], outcome: str) -> None:
++    """Concluded errors/cancellation never trigger automatic model retries."""
++    with _connect(home) as conn:
++        for item in batch:
++            conn.execute(
++                "UPDATE deliveries SET state='finished',outcome=?,updated_at=?,text='',metadata='{}' "
++                "WHERE id=? AND session_key=? AND state='running' AND owner=?",
++                (outcome, time.time(), item["id"], session_key, item["lease"]),
++            )
++
++
++def acknowledge_notice(home, session_key: str, batch: list[dict]) -> None:
++    """Retire a persisted passive notice without recording a model attempt."""
++    with _connect(home) as conn:
++        for item in batch:
++            conn.execute(
++                "UPDATE deliveries SET state='finished',outcome='passive notice persisted',updated_at=?,"
++                "text='',metadata='{}' WHERE id=? AND session_key=? AND state='leased' "
++                "AND owner=? AND delivery_mode='notify'",
++                (time.time(), item["id"], session_key, item["lease"]),
++            )
++
++
++def inspect(home, session_key: str) -> list[dict]:
++    return _read(home, session_key)
++
++
++def blocked(home, session_key: str) -> list[dict]:
++    return _read(home, session_key, "state='blocked'")
++
++
++def _read(home, session_key: str, condition: str = "1") -> list[dict]:
++    path = Path(home) / "sessions" / "notification_inbox.db"
++    if not path.exists():
++        return []
++    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)
++    conn.row_factory = sqlite3.Row
++    try:
++        return [dict(row) for row in conn.execute(
++            "SELECT * FROM deliveries WHERE session_key=? AND " + condition + " ORDER BY created_at,id",
++            (session_key,),
++        )]
++    finally:
++        conn.close()
+diff --git a/tui_gateway/server.py b/tui_gateway/server.py
+index 4455b91..46f769d 100644
+--- a/tui_gateway/server.py
++++ b/tui_gateway/server.py
+@@ -39,6 +39,7 @@ from agent.compaction_display import project_compaction_message_for_display
+ from agent.skill_commands import describe_skill_invocation
+ from agent.conversation_loop import INTERRUPT_WAITING_FOR_MODEL_PREFIX
+ from tui_gateway import git_probe
++from tui_gateway import notification_inbox
+ from tui_gateway.turn_marker import (
+     clear_turn_marker,
+     read_turn_marker,
+@@ -12451,7 +12452,7 @@ def _maybe_fire_tui_loop_tick(sid: str, session: dict) -> None:
+             pass
+ 
+ 
+-def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[str]:
++def _format_kanban_event_text(sub: dict, task, ev, board_slug: str, *, worker: str | None = None) -> Optional[str]:
+     """Single-line notification text for one kanban event.
+ 
+     Wording mirrors the gateway notifier (gateway/kanban_watchers.py) so a
+@@ -12464,7 +12465,7 @@ def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[
+     task_id = sub.get("task_id", "")
+     title = (getattr(task, "title", None) or task_id)[:120]
+     board_tag = f"[{board_slug}] " if board_slug else ""
+-    who = getattr(task, "assignee", None) or ""
++    who = worker or getattr(task, "assignee", None) or ""
+     tag = f"@{who} " if who else ""
+     payload = getattr(ev, "payload", None) or {}
+     if kind == "completed":
+@@ -12497,6 +12498,27 @@ def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[
+     return None
+ 
+ 
++def _notification_recipient_keys(session: dict) -> list[str]:
++    """Read compression ownership only from this profile, without creating a DB."""
++    key = str(session.get("session_key") or "")
++    if not key:
++        return []
++    path = _session_home(session) / "state.db"
++    if not path.exists():
++        return [key]
++    try:
++        from hermes_state import SessionDB
++
++        db = SessionDB(db_path=path, read_only=True)
++        try:
++            return db.get_compression_delivery_keys(key)
++        finally:
++            db.close()
++    except Exception:
++        logger.debug("Task-result lineage unavailable; keeping exact recipient only", exc_info=True)
++        return [key]
++
++
+ def _collect_kanban_notifications(session: dict) -> list:
+     """Claim unseen terminal kanban events for this TUI session's subscriptions.
+ 
+@@ -12504,16 +12526,19 @@ def _collect_kanban_notifications(session: dict) -> list:
+     ``platform="tui"`` and ``chat_id=HERMES_SESSION_KEY`` (see
+     tools/kanban_tools.py ``_maybe_auto_subscribe``). The gateway notifier
+     can't deliver those — there is no "tui" messaging adapter — so this
+-    poller is the delivery path for them (issue #59890). Uses the same
+-    atomic cursor-claim (``claim_unseen_events_for_sub``) as the gateway
+-    notifier, so a subscription is delivered exactly once even if a gateway
+-    and a TUI poll the same board DB.
++    poller is the delivery path for them (issue #59890). Persist each event
++    in the recipient's inbox BEFORE advancing the source cursor. A crash
++    between those commits re-stages the same deterministic ID harmlessly.
++    Collection is not acknowledgement that a model turn finished.
+ 
+     Returns the list of formatted notification texts (may be empty).
+     """
+     session_key = str(session.get("session_key") or "")
+     if not session_key or session.get("_finalized"):
+         return []
++    recipient_keys = _notification_recipient_keys(session)
++    if not recipient_keys:
++        return []
+     try:
+         from hermes_cli import kanban_db as _kb
+     except Exception:
+@@ -12547,11 +12572,8 @@ def _collect_kanban_notifications(session: dict) -> list:
+         # writable unless it has a subscription owned by this exact session;
+         # subscriptions for gateways or other sessions are not actionable here.
+         try:
+-            if _kb.count_notify_subs(
+-                board=slug,
+-                platform="tui",
+-                chat_id=session_key,
+-            ) == 0:
++            if not any(_kb.count_notify_subs(board=slug, platform="tui", chat_id=key)
++                       for key in recipient_keys):
+                 continue
+         except Exception:
+             # Preserve delivery if the read-only probe cannot inspect a
+@@ -12569,9 +12591,19 @@ def _collect_kanban_notifications(session: dict) -> list:
+             for sub in subs:
+                 if (sub.get("platform") or "").lower() != "tui":
+                     continue
+-                if sub.get("chat_id") != session_key:
++                recipient = sub.get("chat_id")
++                if recipient not in recipient_keys:
+                     continue
+-                _old, _new, events = _kb.claim_unseen_events_for_sub(
++                if sub.get("notifier_profile"):
++                    from hermes_cli.profiles import get_profile_dir
++                    try:
++                        if get_profile_dir(sub["notifier_profile"]).resolve() != _session_home(session).resolve():
++                            continue
++                    except Exception:
++                        # A declared owner that cannot be resolved is not a
++                        # license for another profile with a matching key.
++                        continue
++                _new, events = _kb.unseen_events_for_sub(
+                     conn,
+                     task_id=sub["task_id"],
+                     platform=sub["platform"],
+@@ -12583,9 +12615,40 @@ def _collect_kanban_notifications(session: dict) -> list:
+                     continue
+                 task = _kb.get_task(conn, sub["task_id"])
+                 for ev in events:
+-                    text = _format_kanban_event_text(sub, task, ev, slug)
++                    # A task may have been reassigned since this event. Only
++                    # its linked run proves who worked on this attempt.
++                    worker = getattr(_kb.get_run(conn, ev.run_id) if ev.run_id else None, "profile", None)
++                    text = _format_kanban_event_text(sub, task, ev, slug, worker=worker)
+                     if text:
+-                        texts.append(text)
++                        delivery_mode = sub.get("delivery_mode") or "notify"
++                        if delivery_mode not in {"notify", "notify+wake", "wake"}:
++                            delivery_mode = "notify"
++                        delivery_id = hashlib.sha256(json.dumps(
++                            [resolved, sub["task_id"], sub["platform"], recipient,
++                             sub.get("thread_id") or "", ev.id],
++                            ensure_ascii=True,
++                        ).encode()).hexdigest()
++                        if notification_inbox.stage(
++                            _session_home(session), recipient, delivery_id, text,
++                            delivery_mode=delivery_mode,
++                            metadata={
++                                "task_id": sub["task_id"], "board": slug,
++                                "title": getattr(task, "title", None),
++                                "assignee": getattr(task, "assignee", None),
++                                "worker": worker,
++                                "kind": ev.kind,
++                            },
++                        ):
++                            if delivery_mode != "wake":
++                                texts.append(text)
++                # Staging failures raise before this point: the source remains
++                # replayable. Concurrent readers may re-read a range, but the
++                # inbox's unique ID also deduplicates already-finished turns.
++                _kb.advance_notify_cursor(
++                    conn, task_id=sub["task_id"], platform=sub["platform"],
++                    chat_id=recipient, thread_id=sub.get("thread_id") or "",
++                    new_cursor=_new,
++                )
+                 # Unsubscribe only on archive. ``done`` is reversible in
+                 # review/controller flows, so retaining the subscription lets
+                 # a later reopen notify the same originating TUI/Desktop
+@@ -12606,6 +12669,39 @@ def _collect_kanban_notifications(session: dict) -> list:
+     return texts
+ 
+ 
++def _persist_passive_task_notices(sid: str, session: dict, batch: list[dict]) -> None:
++    """Persist and display task updates without creating an agent/model turn."""
++    with session["history_lock"]:
++        try:
++            recipient = batch[0]["session_key"]
++            if (session.get("_finalized") or session.get("_turn_cancel_requested")
++                    or recipient not in _notification_recipient_keys(session)
++                    or any(item["session_key"] != recipient or item.get("delivery_mode") != "notify"
++                           for item in batch)):
++                notification_inbox.release(_session_home(session), recipient, batch)
++                return
++            with _session_db(session) as db:
++                if db is None:
++                    raise RuntimeError("Task notice history is unavailable")
++                for item in batch:
++                    metadata = {
++                        "delivery_ids": [item["id"]],
++                        "task_updates": [dict(json.loads(item.get("metadata") or "{}"), text=item["text"])],
++                    }
++                    db.append_task_notification_once(session["session_key"], item["id"], item["text"], metadata)
++                    history = session.setdefault("history", [])
++                    if not any(item["id"] in (row.get("display_metadata") or {}).get("delivery_ids", [])
++                               for row in history):
++                        history.append({"role": "user", "content": item["text"],
++                                        "display_kind": "kanban_notification", "display_metadata": metadata})
++                        session["history_version"] = int(session.get("history_version", 0)) + 1
++                    _emit("status.update", sid, {"kind": "task_delivery", "text": item["text"],
++                                                  "display_metadata": metadata})
++            notification_inbox.acknowledge_notice(_session_home(session), recipient, batch)
++        finally:
++            session["running"] = False
++
++
+ def _notification_poller_loop(
+     stop_event: threading.Event, sid: str, session: dict
+ ) -> None:
+@@ -12620,9 +12716,9 @@ def _notification_poller_loop(
+     events whose owner is gone; ownerless legacy notifications remain global.
+ 
+     Also polls ``kanban_notify_subs`` every ``_KANBAN_POLL_SECONDS`` for this
+-    session's TUI kanban subscriptions and delivers terminal task events the
+-    same way (status.update + agent turn) — the delivery path
+-    tools/kanban_tools.py documents for platform="tui" rows (issue #59890).
++    session's TUI kanban subscriptions. Passive ``notify`` rows become durable
++    transcript notices without a model call; ``notify+wake``/``wake`` rows
++    request an operator turn. Automatic delegation explicitly chooses wake.
+     """
+     from tools.process_registry import process_registry, format_process_notification
+ 
+@@ -12659,30 +12755,73 @@ def _notification_poller_loop(
+             if _kanban_texts:
+                 for _kb_text in _kanban_texts:
+                     _emit("status.update", sid, {"kind": "process", "text": _kb_text})
+-                # Events are cursor-claimed (never re-queued), so buffer them
+-                # until the session is idle instead of dropping the agent turn.
+-                session.setdefault("_kanban_pending", []).extend(_kanban_texts)
+-            _pending = session.get("_kanban_pending") or []
+-            if _pending:
+-                _batch: list = []
++            _batch: list = []
++            _home = _session_home(session)
++            _key = str(session.get("session_key") or "")
++            _recipient_keys = _notification_recipient_keys(session)
++            try:
+                 with session["history_lock"]:
+-                    if not session.get("running"):
+-                        session["running"] = True
+-                        _batch = list(_pending)
+-                        session["_kanban_pending"] = []
+-                if _batch:
++                    if (_key and not session.get("running")
++                            and not session.get("_auto_continue_scheduled")
++                            and not session.get("_turn_cancel_requested")
++                            and not session.get("_finalized")):
++                        _config_home_token = set_hermes_home_override(str(_home))
++                        try:
++                            _enabled, _freshness, _recoveries = _auto_continue_config()
++                        finally:
++                            reset_hermes_home_override(_config_home_token)
++                        for _recipient in reversed(_recipient_keys):
++                            _batch = notification_inbox.claim(
++                                _home, _recipient, recover_running=_enabled,
++                                freshness_seconds=_freshness, max_recoveries=_recoveries,
++                            )
++                            if _batch:
++                                break
++                        if _batch:
++                            session["running"] = True
++                for _blocked in (row for key in _recipient_keys
++                                 for row in notification_inbox.blocked(_home, key)):
++                    _blocked_key = ("kanban-blocked", _blocked["id"])
++                    if _blocked_key not in _emitted:
++                        _emit("status.update", sid, {
++                            "kind": "process",
++                            "text": "Task-result recovery paused by settings, age, or retry limit. "
++                                    "Review the saved task/history before continuing: " + _blocked["text"],
++                        })
++                        _emitted.add(_blocked_key)
++                if _batch and _batch[0].get("delivery_mode") == "notify":
++                    _persist_passive_task_notices(sid, session, _batch)
++                elif _batch:
+                     rid = f"__notif__{int(time.time() * 1000)}"
+-                    try:
+-                        _emit("message.start", sid)
+-                        _run_prompt_submit(rid, sid, session, "\n".join(_batch))
+-                    except Exception as exc:
+-                        print(
+-                            f"[tui_gateway] kanban notification dispatch failed: "
+-                            f"{type(exc).__name__}: {exc}",
+-                            file=sys.stderr,
++                    _text = "\n".join(item["text"] for item in _batch)
++                    if any(item["attempts"] for item in _batch):
++                        _text = (
++                            "[Recovering an interrupted task-result turn. Actions may already "
++                            "have happened. Inspect saved history and current state before "
++                            "repeating anything; reconcile non-idempotent actions first.]\n" + _text
+                         )
+-                        with session["history_lock"]:
+-                            session["running"] = False
++                    _emit("message.start", sid)
++                    _accepted = _run_prompt_submit(
++                        rid, sid, session, _text, kanban_batch=_batch,
++                        display_kind="kanban_notification",
++                        display_metadata={
++                            "delivery_ids": [item["id"] for item in _batch],
++                            "task_updates": [dict(json.loads(item.get("metadata") or "{}"),
++                                                  text=item["text"]) for item in _batch],
++                        },
++                        image_paths=[],
++                    )
++                    if _accepted is False:
++                        notification_inbox.release(_home, _batch[0]["session_key"], _batch)
++            except Exception as exc:
++                logger.warning("kanban notification dispatch failed: %s", exc, exc_info=True)
++                if _batch:
++                    try:
++                        notification_inbox.release(_home, _batch[0]["session_key"], _batch)
++                    except Exception:
++                        logger.warning("notification lease release failed; lease will expire", exc_info=True)
++                    with session["history_lock"]:
++                        session["running"] = False
+         try:
+             evt = process_registry.completion_queue.get(timeout=0.5)
+         except Exception:
+@@ -13187,6 +13326,7 @@ def _run_prompt_submit(
+     image_paths: list[str] | None = None,
+     queued_prompt_generation: int | None = None,
+     terminal_callback: Callable[[dict[str, Any]], None] | None = None,
++    kanban_batch: list[dict] | None = None,
+ ) -> bool:
+     # Ownership admission at the ONE chokepoint every fresh turn source must
+     # cross. prompt.submit already claims the slot in its RPC handler (so this
+@@ -13205,7 +13345,17 @@ def _run_prompt_submit(
+         _emit("error", sid, {"message": str(ownership_refusal)})
+         return False
+     with session["history_lock"]:
+-        if session.get("_closing"):
++        kanban_key = str(kanban_batch[0].get("session_key") or "") if kanban_batch else ""
++        if session.get("_closing") or (kanban_batch and (
++            session.get("_turn_cancel_requested") or session.get("_finalized")
++            or kanban_key not in _notification_recipient_keys(session)
++            or any(item.get("session_key") != kanban_key for item in kanban_batch)
++            or any(item.get("delivery_mode") == "notify" for item in kanban_batch)
++        )):
++            if kanban_batch:
++                notification_inbox.release(
++                    _session_home(session), kanban_key, kanban_batch,
++                )
+             session["running"] = False
+             return False
+         if (
+@@ -13293,10 +13443,10 @@ def _run_prompt_submit(
+         # session.resume auto-continues from it. Compression can rotate
+         # session_key mid-turn, so remember the key we wrote under.
+         marker_home = _session_home(session)
+-        marker_key = str(session.get("session_key") or "")
++        marker_key = kanban_key if kanban_batch else str(session.get("session_key") or "")
+         marker_attempt = int(session.pop("_auto_continue_attempt", 0) or 0)
+         marker_text = session.pop("_auto_continue_prompt", None) or text
+-        if isinstance(marker_text, str) and marker_text.strip():
++        if not kanban_batch and isinstance(marker_text, str) and marker_text.strip():
+             # Publish the original key before the disk write so an interrupt
+             # racing startup can retire it even if compression rotates the
+             # session key later. The post-write cancel check closes the inverse
+@@ -13308,7 +13458,18 @@ def _run_prompt_submit(
+                 marker_cancelled = bool(session.get("_turn_cancel_requested"))
+             if marker_cancelled:
+                 clear_turn_marker(marker_home, marker_key)
++        # The inbox owns task-result recovery; do not create a second generic
++        # resume marker. Keep every upstream ownership/terminal callback guard.
++        history = []
++        _terminal_scope_token = None
+         try:
++            if kanban_batch and not notification_inbox.start(marker_home, marker_key, kanban_batch):
++                raise RuntimeError("Task-result delivery lease expired before the turn started")
++            if kanban_batch:
++                _emit("status.update", sid, {
++                    "kind": "task_delivery", "text": text,
++                    "display_metadata": display_metadata,
++                })
+             from tools.approval import (
+                 reset_current_session_key,
+                 set_current_session_key,
+@@ -13838,6 +13999,8 @@ def _run_prompt_submit(
+                 payload["recoverable"] = True
+                 if _error_surface:
+                     payload["error_surface"] = _error_surface
++            if kanban_batch:
++                notification_inbox.finish(marker_home, marker_key, kanban_batch, status)
+             if terminal_callback is not None:
+                 terminal_receipt_attempted = True
+                 terminal_callback(
+@@ -14069,6 +14232,13 @@ def _run_prompt_submit(
+                 )
+                 _emit("error", sid, {"message": str(e)})
+         finally:
++            if kanban_batch:
++                try:
++                    # No-op if already settled. A handled error is a concluded
++                    # turn, not permission to rerun potentially completed tools.
++                    notification_inbox.finish(marker_home, marker_key, kanban_batch, "error")
++                except Exception:
++                    logger.error("Task-result outcome could not be checkpointed", exc_info=True)
+             # Drop both local snapshots of the pre-turn history before asking
+             # glibc to return pages. session["history"] already points at the
+             # new/pruned result; retaining either list defeats this trim.

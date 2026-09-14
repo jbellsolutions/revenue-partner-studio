@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Orgo AI Guy Bot maintenance daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=orgo-maintenance.service
+
+[Install]
+WantedBy=timers.target

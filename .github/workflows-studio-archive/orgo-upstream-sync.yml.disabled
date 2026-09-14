@@ -1,0 +1,172 @@
+name: Orgo daily upstream sync
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: orgo-upstream-sync-main
+  cancel-in-progress: false
+
+jobs:
+  verify-upstream:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      update_available: ${{ steps.merge.outputs.update_available }}
+      base_sha: ${{ steps.merge.outputs.base_sha }}
+      candidate_sha: ${{ steps.merge.outputs.candidate_sha }}
+    steps:
+      - name: Check out the trusted Orgo base
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Fetch and merge Nick's upstream
+        id: merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          readonly UPSTREAM_URL="https://github.com/nickvasilescu/korgo-bot.git"
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+          base_sha="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse upstream/main)"
+          readonly trusted_author="nickvasilescu"
+          readonly trusted_github_signer="web-flow"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          merge_base="$(git merge-base HEAD upstream/main)"
+          while read -r commit_sha; do
+            [[ -z "$commit_sha" ]] && continue
+            metadata="$(gh api "repos/nickvasilescu/korgo-bot/commits/$commit_sha" --jq '[.commit.verification.verified, .author.login] | @tsv')"
+            IFS=$'\t' read -r verified author_login <<< "$metadata"
+            signature="$(gh api graphql \
+              -f query='query($owner:String!,$name:String!,$oid:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$oid){... on Commit{signature{isValid signer{login} wasSignedByGitHub}}}}}' \
+              -F owner=nickvasilescu -F name=korgo-bot -F oid="$commit_sha" \
+              --jq '[.data.repository.object.signature.isValid, .data.repository.object.signature.signer.login, .data.repository.object.signature.wasSignedByGitHub] | @tsv')"
+            IFS=$'\t' read -r signature_valid signer_login github_signed <<< "$signature"
+            if [[ "$verified" != "true" || "$signature_valid" != "true" ]]; then
+              echo "blocked-unverified-upstream: $commit_sha" >&2
+              exit 1
+            fi
+            if [[ "$author_login" != "$trusted_author" ]]; then
+              echo "blocked-untrusted-upstream-author: $commit_sha author=$author_login" >&2
+              exit 1
+            fi
+            if [[ "$signer_login" != "$trusted_author" && ! ( "$signer_login" == "$trusted_github_signer" && "$github_signed" == "true" ) ]]; then
+              echo "blocked-untrusted-upstream-signer: $commit_sha signer=$signer_login" >&2
+              exit 1
+            fi
+          done < <(git rev-list "$merge_base..upstream/main")
+          if ! git diff --quiet "$merge_base" upstream/main -- '.github/**'; then
+            echo "blocked-protected-path: Nick's update changes .github/** and requires manual review." >&2
+            git diff --name-only "$merge_base" upstream/main -- '.github/**' >&2
+            exit 1
+          fi
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "update_available=false" >> "$GITHUB_OUTPUT"
+            echo "candidate_sha=$base_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "Orgo AI Guy Bot Updater"
+          git config user.email "orgo-ai-guy-bot@users.noreply.github.com"
+          git merge --no-edit upstream/main
+          candidate_sha="$(git rev-parse HEAD)"
+          echo "update_available=true" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        if: steps.merge.outputs.update_available == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Verify maintenance controller
+        if: steps.merge.outputs.update_available == 'true'
+        run: python3 -m unittest tests.test_orgo_maintenance tests.test_orgo_automation_contract
+
+      - name: Install desktop dependencies
+        if: steps.merge.outputs.update_available == 'true'
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Type-check, lint, and run product security tests
+        if: steps.merge.outputs.update_available == 'true'
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          npx tsc -p tsconfig.electron.json --noEmit
+          npx tsc -p tsconfig.json --noEmit
+          npm run lint
+          npx vitest run --project ui \
+            src/lib/product.test.ts \
+            src/app/bot-product/setup-overlay.test.ts \
+            src/app/right-sidebar/desktop/index.test.tsx
+          npx vitest run --project electron \
+            electron/product.test.ts \
+            electron/bootstrap-runner.test.ts \
+            electron/orgo-desktop.test.ts \
+            electron/legacy-safe-storage-wiring.test.ts \
+            electron/bot-product-build.test.ts
+
+      - name: Freeze the verified candidate as a Git bundle
+        if: steps.merge.outputs.update_available == 'true'
+        env:
+          BASE_SHA: ${{ steps.merge.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ steps.merge.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          git update-ref refs/heads/orgo-verified-candidate "$CANDIDATE_SHA"
+          git bundle create /tmp/orgo-upstream.bundle refs/heads/orgo-verified-candidate "^$BASE_SHA"
+          git bundle verify /tmp/orgo-upstream.bundle
+
+      - name: Upload verified candidate
+        if: steps.merge.outputs.update_available == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: orgo-verified-upstream-candidate
+          path: /tmp/orgo-upstream.bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-upstream:
+    needs: verify-upstream
+    if: needs.verify-upstream.outputs.update_available == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the unchanged trusted base
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Download verified candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: orgo-verified-upstream-candidate
+          path: /tmp/orgo-upstream
+
+      - name: Fast-forward main to the verified candidate
+        env:
+          BASE_SHA: ${{ needs.verify-upstream.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ needs.verify-upstream.outputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          git bundle verify /tmp/orgo-upstream/orgo-upstream.bundle
+          git fetch /tmp/orgo-upstream/orgo-upstream.bundle \
+            refs/heads/orgo-verified-candidate:refs/remotes/orgo-candidate/main
+          test "$(git rev-parse refs/remotes/orgo-candidate/main)" = "$CANDIDATE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$CANDIDATE_SHA"
+          git push origin refs/remotes/orgo-candidate/main:refs/heads/main

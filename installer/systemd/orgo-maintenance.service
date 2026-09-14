@@ -1,0 +1,18 @@
+[Unit]
+Description=Orgo AI Guy Bot verified maintenance
+After=network-online.target hermes-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=HERMES_HOME=/root/.hermes
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+ExecStart=/usr/local/sbin/orgo-remote-maintenance
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

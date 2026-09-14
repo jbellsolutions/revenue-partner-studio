@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "base_revision": "63279301bcbdc185c1b07b98a9312eb0c862f26d",
+  "source_changes": [
+    "257d559",
+    "384e492",
+    "3f10fb5",
+    "5216da4",
+    "afe504195b673237c51ab94b4d37e9f8a54a4d92",
+    "49834440ffbc10c3ec8e867abe192e0a247b015c",
+    "80960492edd15b7e1ff77954fa66a4a58b897e8d",
+    "86c458aec96d3e80a19a4ba5bea5ee5e160e74d1"
+  ],
+  "patch": "63279301-delivery-modes.patch",
+  "patch_sha256": "af31e4dad296d54b9a76a020c7782764f344bc10e3f6df71ed3ab4d5b017ef30",
+  "base_files": {
+    "hermes_cli/dashboard_procs.py": "79b8466bba21f10b1ea7dcd6450f7ea4851d7d45c97b4c32f274e7f386f217c2",
+    "hermes_cli/gateway.py": "8fc1a762f86151861c1e5b02506f8c7f94c7237e6fdd3770078203df8a8b1f27",
+    "hermes_cli/kanban.py": "b6bba15c847ec9ee34ac59dbe7d4cb03ac0329c3c3a8704fa06e0bfab4573dfa",
+    "hermes_cli/kanban_db.py": "1a80526f635bc240ef6584aea1b3f158ac4548602ed1bd56e020e2b549b2d6b7",
+    "hermes_state.py": "c8e0d9bbb23eacc00f7ca6459fb7995de19e18ce82a379f326da905ec14ea6e9",
+    "tests/hermes_cli/test_gateway.py": "9a6b7edb6d177252b63b389652f6de1b90c91b127f4e44df16ba2c49aac5a199",
+    "tests/hermes_cli/test_orphan_desktop_serve_reap.py": "62c23f741628557d08047c447bb9775befcfbdbcb48dc84b2b21c5d0e7fa0417",
+    "tests/tools/test_kanban_tools.py": "61b3c17ab16386eac27ea714f492cd9ef9605be2a2a63f50c19c01ae098172ce",
+    "tests/tui_gateway/test_kanban_notify_poller.py": "4c12e9b8414b078170f24012e083260e13334a96ff95f608c170016ad52aa07f",
+    "tools/kanban_tools.py": "66c260fe94d660fe430d9a048d72f9200a48326f066390b536552cfc1deab89f",
+    "tui_gateway/server.py": "7e98a93354522498026619813329bf28ab76093b9abe89884eaa4c1e5605377d"
+  },
+  "output_files": {
+    "hermes_cli/dashboard_procs.py": "4de3b66ebcc38685c25925ef739fc4a42bf807b9a17227aebf7b90cb20e93046",
+    "hermes_cli/gateway.py": "8ba26aab083f9e598e8d52721a239b2de1262ce2018a3eab6506bbb03c437a1f",
+    "hermes_cli/kanban.py": "c8caea18a4ee5aaf79a0cac21cda01964fe2796f482a53ec23c81220e43c414a",
+    "hermes_cli/kanban_db.py": "905190be4adc26a30b144a947f4eaa451506152db78258066113628b652d998a",
+    "hermes_state.py": "4e7224feaff66a5100ea9ce41d453944cde93d7ae049504fa4aea5c7177570e9",
+    "pyproject.toml": "b66524fe2da8c3014f28f34de89779ba0797650fb562752749b1d4986bb5ae6d",
+    "tests/hermes_cli/test_desktop_serve_home_isolation.py": "e82461430a380d26433c09c5fd5a60531f02db579890c0331b3ddcec051cdcd8",
+    "tests/hermes_cli/test_gateway.py": "d938ad247f7a13a28e8c862fda92511bf84afd6af9a2a49e42853fc79cd7c15a",
+    "tests/hermes_cli/test_gateway_home_isolation.py": "5c7a8c8cdea14dc1ac3b55a60f497467af3388e5311afee3821968602b42e3cd",
+    "tests/hermes_cli/test_kanban_create_return_route.py": "e0249cd74a88e6d1e405c029206553b181cfa8aa387b01b4ef2c7ed59207900e",
+    "tests/hermes_cli/test_orphan_desktop_serve_reap.py": "6c84b58febb04ed46babf068e4b8db3c44cd3407c97a042d9524e7bc4868f9d4",
+    "tests/tools/test_kanban_tools.py": "cb84eddb944a0b1ea35c055c66f389a36e79c075029d825e17af74dcc0426931",
+    "tests/tui_gateway/test_kanban_notify_poller.py": "84602273db6f5b3b0ee84a1da96a3dbe9620d2e7204d3e62e340bc8faf50ab1b",
+    "tests/tui_gateway/test_notification_compression.py": "9513c2fe5323b1766aab480bf46a51aab4e43eed9c8a614f0148574cb3741290",
+    "tests/tui_gateway/test_notification_inbox.py": "8af4034791e4406b8b8eeae7c1dc488786bde30e34ac6b35e0e994bb6dcb99be",
+    "tests/tui_gateway/test_notification_modes.py": "10be6f6c15a0d737d3eeb215d8950ee665b9db7019852e41d591ff3980055826",
+    "tests/tui_gateway/test_orgo_task_result_turn.py": "bb3f335d142f51e603962742e13740cd6f895d0379d4da1133393a301937325e",
+    "tools/kanban_tools.py": "3d60c53ee6a2229cf56b66ecaecec8d3df631e5b7446d1cf7c404e3a688e6a91",
+    "tui_gateway/notification_inbox.py": "450cbbb37f4c5ccf11f7f9b91869d4c089e14991dc43abe565ffb06b7afb906d",
+    "tui_gateway/server.py": "914a2fbd736a06b4fdd0cdddfa991f4057a1d05571576a6321f2b3684bd37037",
+    "uv.lock": "6393f09ee88cc5683f0e563306f96b5c068f901a8baa60f7209f302c1ac602d9"
+  },
+  "new_files": [
+    "tests/hermes_cli/test_desktop_serve_home_isolation.py",
+    "tests/hermes_cli/test_gateway_home_isolation.py",
+    "tests/hermes_cli/test_kanban_create_return_route.py",
+    "tests/tui_gateway/test_notification_compression.py",
+    "tests/tui_gateway/test_notification_inbox.py",
+    "tests/tui_gateway/test_notification_modes.py",
+    "tests/tui_gateway/test_orgo_task_result_turn.py",
+    "tui_gateway/notification_inbox.py"
+  ]
+}

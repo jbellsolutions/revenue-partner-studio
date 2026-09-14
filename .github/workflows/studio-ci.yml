@@ -1,0 +1,55 @@
+name: Revenue Partner Studio verification
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: studio-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: npm
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: '0.12.7'
+          enable-cache: true
+      - run: npm ci --ignore-scripts
+      - run: uv sync --frozen --python 3.11 --extra dev --extra mcp --extra anthropic
+      - name: Provider credential isolation
+        run: scripts/run_tests.sh tests/agent/test_studio_anthropic_auth.py tests/agent/test_anthropic_adapter.py tests/agent/test_auxiliary_client_azure_foundry.py tests/agent/test_nous_portal_anthropic_wire.py tests/agent/test_azure_identity_adapter.py -j 2 -q
+      - name: Installer and remote ownership checks
+        run: |
+          bash -n distribution/remote-bootstrap.sh distribution/studio-serve
+          node --test distribution/configure.test.mjs distribution/setup.test.mjs
+          scripts/run_tests.sh tests/test_studio_upstream.py tests/test_studio_distribution.py tests/test_studio_store.py tests/test_studio_permissions.py tests/test_studio_recovery.py tests/test_studio_screens.py tests/test_studio_screen_bridge.py tests/test_studio_status.py tests/test_studio_browser_interaction.py tests/tools/test_studio_approval_identity.py -j 2 -q
+      - run: npm run typecheck --workspace apps/desktop
+      - name: Desktop policy and connection tests
+        run: npm exec --workspace apps/desktop -- vitest run electron/studio-policy.test.ts electron/studio-connection.test.ts electron/hermes-existing-connection.test.ts src/plugins/hermes-bots/existing-workspace.test.ts electron/orgo-desktop.test.ts electron/orgo-screen-session.test.ts electron/orgo-broker.test.ts electron/product.test.ts src/lib/product.test.ts electron/studio-computers.test.ts electron/studio-launch.test.ts electron/studio-window-state.test.ts src/app/chat/composer/model-pill.test.tsx electron/bot-instances.test.ts src/app/bot-product/open-computer.test.tsx src/app/bot-product/computer-window.test.tsx src/app/bot-product/workspace-controls.test.tsx
+
+  cloud-and-public-site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm --prefix cloud ci --ignore-scripts --workspaces=false
+      - run: npm --prefix cloud test
+      - run: npm --prefix cloud run typecheck
+      - run: npm --prefix cloud run build
+      - run: node distribution/package-runtime.mjs . cloud/dist/setup
+      - run: npm --prefix site ci --ignore-scripts --workspaces=false
+      - run: npm --prefix site run build
+      - run: npm --prefix site test
+      - run: node --test distribution/setup.test.mjs
