@@ -40,6 +40,7 @@ def test_only_selected_skills_reach_existing_agent_and_hash_updates_preserve_con
     (target/'skills/writing/email/SKILL.md').write_text('Cloud edit')
     (skill/'helper.sh').write_text('echo source change')
     updated=build(source,COMPUTER,SCOPE)
+    assert preview(dest,COMPUTER,updated)['profiles'][0]['conflicts']==2
     result=apply_bundle(dest,COMPUTER,updated)
     assert len(result['conflicts'])==2
     assert (target/'skills/writing/email/SKILL.md').read_text()=='Cloud edit'

@@ -86,13 +86,21 @@ def inspect(home, computer, bundle):
 def preview(home, computer, bundle):
     scope, root, files, _, record = inspect(home, computer, bundle)
     counts = {'added': 0, 'changed': 0, 'conflicts': 0, 'unchanged': 0}
-    for key, item in files.items():
-        file = root / key; current = digest(file) if file.exists() else None
-        old = record['hashes'].get(key)
-        if current == item['sha256'] or (current is not None and record['sourceHashes'].get(key) == item['sha256']): counts['unchanged'] += 1
-        elif current is None: counts['added'] += 1
-        elif current == old: counts['changed'] += 1
-        else: counts['conflicts'] += 1
+    roots = [s for s in scope['skillIds'] if not any(s.startswith(other + '/') for other in scope['skillIds'] if s != other)]
+    for skill in roots:
+        group = {k: v for k, v in files.items() if k.startswith('skills/' + skill + '/')}
+        if all((root / k).exists() and record['sourceHashes'].get(k) == v['sha256'] for k, v in group.items()):
+            counts['unchanged'] += len(group)
+            continue
+        conflict = any((root / k).exists() and digest(root / k) not in (v['sha256'], record['hashes'].get(k)) for k, v in group.items())
+        if conflict:
+            counts['conflicts'] += len(group)
+            continue
+        for key, item in group.items():
+            file = root / key
+            if not file.exists(): counts['added'] += 1
+            elif digest(file) == item['sha256']: counts['unchanged'] += 1
+            else: counts['changed'] += 1
     return {'scope': 'skills', 'skills': scope['skillIds'], 'profiles': [{'source': scope['sourceProfile'], 'target': scope['targetAgent'], 'newProfile': False, **counts}],
             'warnings': bundle.get('warnings', []), 'credentialsExcluded': True, 'conflictPolicy': 'Preserve the entire incoming skill when an installed file conflicts'}
 
