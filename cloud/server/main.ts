@@ -16,6 +16,7 @@ const gateway = createGateway({
   qualificationStatus: () => qualification?.summary() || { state: 'not_started' },
   store,
   password: process.env.STUDIO_OWNER_PASSWORD || '',
+  allowedOrigins: (process.env.STUDIO_ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean),
   origin: process.env.STUDIO_PUBLIC_URL || 'http://127.0.0.1:8788',
   publicDir: process.env.STUDIO_PUBLIC_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')
 })

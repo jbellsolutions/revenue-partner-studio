@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { rpc } from './api'
+import { invalidateModels } from './model-catalog'
 
 export function Endpoints({ computer, agent }: { computer: string; agent: string }) {
   const [rows, setRows] = useState<any[]>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false)
@@ -8,7 +9,7 @@ export function Endpoints({ computer, agent }: { computer: string; agent: string
     {rows.map((r, i) => <p key={i}><strong>{r.name}</strong> · {r.model || 'Configured in Hermes'}</p>)}
     <form onSubmit={async e => {
       e.preventDefault(); const form = e.currentTarget; const values = Object.fromEntries(new FormData(form)); setBusy(true); setError('')
-      try { const r = await rpc(computer, 'endpoints.configure', { ...values, agentId: agent }); setRows(r.endpoints); setError(r.message); form.reset() }
+      try { const r = await rpc(computer, 'endpoints.configure', { ...values, agentId: agent }); setRows(r.endpoints); invalidateModels(computer, agent); setError(r.message); form.reset() }
       catch (e) { setError((e as Error).message) } finally { setBusy(false) }
     }}>
       <label>Name<input name="name" required maxLength={64} /></label>

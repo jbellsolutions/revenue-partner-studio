@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { AgentAvatar } from '../../brand/agent-avatar'
+import '../../brand/agent-avatar.css'
 import BRAND from '../../brand/product.json'
 import prompt from '../../docs/SETUP-PROMPT.txt?raw'
 import prep from '../../docs/BEFORE-YOU-START.md?raw'
@@ -103,7 +105,7 @@ function Demo({ preview = false }: { preview?: boolean }) {
               onClick={() => act('select', i)}
               aria-pressed={state.selected === i}
             >
-              <span className={'avatar ' + a.color}>{a.initials}</span>
+              <AgentAvatar name={a.name} identity={a.name} head={a.name === 'AI Co-founder'} />
               <span>
                 {a.name}
                 <small>Sample workspace</small>
@@ -118,7 +120,7 @@ function Demo({ preview = false }: { preview?: boolean }) {
         </aside>
         <div className="demo-center">
           <div className="workspace-header">
-            <span className={'avatar ' + c.color}>{c.initials}</span>
+            <AgentAvatar name={c.name} identity={c.name} head={c.name === 'AI Co-founder'} />
             <div>
               <h2>{c.name}</h2>
               <p>Hermes profile · {c.name}</p>

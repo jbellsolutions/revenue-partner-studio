@@ -1,7 +1,9 @@
+import type { ModelSelection } from './model-catalog'
 import type { Attachment } from './attachments'
 export type Message = { id: string | number; role: string; content: string; truncated?: boolean }
 export type Agent = { id: string; name: string; description: string; model: string; provider: string; head: boolean }
 export type Conversation = {
+  modelSelection?: ModelSelection
   pendingSend?: { requestId: string; runtimeId: string; text: string; attachmentIds: string[] }
   attachments: Attachment[]
   readOnly: boolean

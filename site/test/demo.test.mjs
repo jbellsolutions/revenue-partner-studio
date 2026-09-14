@@ -55,7 +55,7 @@ test('all four routes, redirect and accessible labels remain present', () => {
   const source = read('src/main.tsx')
   for (const route of ['/demo', '/build', '/prep'])
     assert.ok(read('public/_redirects').includes(route + ' /index.html 200'))
-  assert.match(read('public/_redirects'), /www\.betterthangrokbot\.com/)
+  assert.match(read('public/_redirects'), /www\.revenuepartnerstudio\.com/)
   for (const text of [
     'Skip to content',
     'Reset demo',

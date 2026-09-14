@@ -2,11 +2,12 @@
   "name": "Revenue Partner Studio",
   "publisher": "Your AI Guy",
   "byline": "by Your AI Guy",
-  "version": "0.2.0-beta.1",
+  "version": "0.2.0-beta.2",
   "repository": "https://github.com/jbellsolutions/revenue-partner-studio",
-  "website": "https://betterthangrokbot.com",
+  "website": "https://revenuepartnerstudio.com",
   "orgo": "https://orgo.ai?r=aiguy",
   "claudeCode": "https://code.claude.com/docs/en/quickstart",
   "codex": "https://openai.com/codex/",
-  "railway": "https://railway.com/pricing"
+  "railway": "https://railway.com/pricing",
+  "app": "https://app.revenuepartnerstudio.com"
 }

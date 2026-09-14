@@ -299,7 +299,7 @@ class Connector:
             if method=='library.preview':return await asyncio.to_thread(library.preview,self.computer,p['manifest'])
             if method=='library.chunk':return await asyncio.to_thread(library.chunk,p['exportId'],p['offset'])
             if method=='library.export':
-                async with self.upload_lock:return await asyncio.to_thread(library.export,p['targetComputerId'],p['profiles'],request_id)
+                async with self.upload_lock:return await asyncio.to_thread(library.export,p['targetComputerId'],p['profiles'],request_id,p.get('selection'))
             raise ValueError('Unknown Hermes library operation')
         if method == 'status':
             try:
@@ -308,7 +308,7 @@ class Connector:
                 capabilities = await self.rpc('studio.capabilities', {})
                 self.capabilities['teams'] = bool(capabilities.get('teams'))
                 self.capabilities['a2a'] = bool(capabilities.get('a2a'))
-                for capability in ('files','profiles','providerKeys'):
+                for capability in ('files','profiles','providerKeys','librarySkills'):
                     self.capabilities[capability] = bool(capabilities.get(capability))
             except RuntimeError:
                 self.capabilities['teams'] = False

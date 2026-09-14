@@ -5,7 +5,7 @@ Your agents. Your computers. One workspace.
 
 A private browser interface for persistent **Hermes agents on Orgo computers**, with an optional companion for local Hermes on a Mac. Keep your agents and conversations on the left, work in the center, and the selected computer’s screen on the right.
 
-**[Try the free demo](https://betterthangrokbot.com/demo)** · **[Build your own](https://betterthangrokbot.com/build)** · **[Before you start](docs/BEFORE-YOU-START.md)** · **[Copy setup prompt](https://betterthangrokbot.com/build#setup-prompt)**
+**[Try the free demo](https://revenuepartnerstudio.com/demo)** · **[Build your own](https://revenuepartnerstudio.com/build)** · **[Before you start](docs/BEFORE-YOU-START.md)** · **[Copy setup prompt](https://revenuepartnerstudio.com/build#setup-prompt)**
 
 The demo uses invented sample data and simulated screens. It has no connection to the publisher’s computers, no model calls, no uploads and no account requirement. Your own installation uses your own hosting, computers and model access.
 
@@ -15,7 +15,7 @@ Give your coding assistant this repository URL and the request below. It perform
 
 ```text
 Install Revenue Partner Studio by Your AI Guy from
-https://github.com/jbellsolutions/revenue-partner-studio at v0.2.0-beta.1.
+https://github.com/jbellsolutions/revenue-partner-studio at v0.2.0-beta.2.
 Read AGENTS.md and INSTALL.md. Use an independent folder, check prerequisites
 and accounts, explain costs, deploy my private Railway workspace, connect my
 selected Orgo Linux computer, configure my selected model provider, and verify
@@ -25,7 +25,7 @@ capacity without approval, or enable an unapproved paid fallback. Do the
 technical work and report any verification that remains incomplete.
 ```
 
-[Open the copy button](https://betterthangrokbot.com/build#setup-prompt) · [Download the complete prompt](docs/SETUP-PROMPT.txt) · [Word preparation guide](docs/Revenue%20Partner%20Studio%20-%20Before%20You%20Start.docx)
+[Open the copy button](https://revenuepartnerstudio.com/build#setup-prompt) · [Download the complete prompt](docs/SETUP-PROMPT.txt) · [Word preparation guide](docs/Revenue%20Partner%20Studio%20-%20Before%20You%20Start.docx)
 
 GitHub renders this fenced prompt with its own copy control; the website also provides a one-click button.
 
@@ -49,7 +49,7 @@ The Orgo link is an affiliate link; no particular discount is promised. As check
 
 ## Release status
 
-**v0.2.0-beta.1** is a private-workspace beta, not a shared multi-tenant SaaS. The existing connected workflow has backend acceptance evidence; an independent recipient installation and complete browser acceptance remain separate release checks. Mac chat and approved files are supported; Mac desktop control is hidden. There is no notarized public Mac binary in this release. Runtime entitlement depends on the selected provider.
+**v0.2.0-beta.2** is a private-workspace beta, not a shared multi-tenant SaaS. The existing connected workflow has backend acceptance evidence; an independent recipient installation and complete browser acceptance remain separate release checks. Mac chat and approved files are supported; Mac desktop control is hidden. There is no notarized public Mac binary in this release. Runtime entitlement depends on the selected provider.
 
 The custom domain is awaiting DNS activation. A [Cloudflare preview](https://revenue-partner-studio.pages.dev) is deployed, but anonymous access verification remains incomplete. The installation instructions and preparation files are available directly in this repository.
 
@@ -79,3 +79,5 @@ Use Node 22.22 or newer (Node 24 recommended). For runtime changes use `scripts/
 ## License and attribution
 
 MIT, including the original Nous Research copyright. Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent), descended from AI Guy’s Orgo integration, with a Studio interface inspired by agent desktop workflows. See [NOTICE.md](NOTICE.md) and [PROVENANCE.md](PROVENANCE.md). This project is independent of the referenced vendors and does not include proprietary Grok code.
+
+Read [what changed in round two](docs/ROUND-TWO.md) for the chat model menu, screen controls and selected-skill imports. Existing computer extensions need a compatible update before selected-skill transfers become available.

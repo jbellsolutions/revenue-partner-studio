@@ -3,7 +3,11 @@ import { LocalSetup } from './local'
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Streamdown } from 'streamdown'
+import { ChatMessage } from './message'
+import { AgentAvatar } from '../../brand/agent-avatar'
+import '../../brand/agent-avatar.css'
 import { api, rpc } from './api'
+import { invalidateModels, type ModelSelection } from './model-catalog'
 import { ComputerManager } from './computers'
 import { HermesLibrary } from './library'
 import { Explorer } from './explorer'
@@ -33,15 +37,13 @@ import '../../apps/desktop/src/app/bot-product/shell.css'
 import './style.css'
 
 type Computer = { id: string; name: string; online: boolean; kind?: string }
-const initials = (name: string) =>
-  name
-    .replace(/[-_]/g, ' ')
-    .split(' ')
-    .map(x => x[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase()
-const title = (agent: Agent) => agent.name === 'default' ? 'Head of Operations' : agent.name.replace(/^imported-/, '').replace(/-[a-f0-9]{10}$/, '').replace(/[-_]/g, ' ')
+const title = (agent: Agent) =>
+  agent.name === 'default'
+    ? 'Head of Operations'
+    : agent.name
+        .replace(/^imported-/, '')
+        .replace(/-[a-f0-9]{10}$/, '')
+        .replace(/[-_]/g, ' ')
 const isTestAgent = (agent: Agent) => /(?:^|[-_ ])studio[-_ ]qa(?:[-_ ]|$)/i.test(agent.id + ' ' + agent.name)
 function App() {
   const [auth, setAuth] = useState<boolean | null>(null),
@@ -63,8 +65,13 @@ function App() {
   const [providers, setProviders] = useState<any>(null),
     [flow, setFlow] = useState<any>(null)
   const [details, setDetails] = useState(false)
-  const [showTests, setShowTests] = useState(false), [settingsTab, setSettingsTab] = useState('accounts')
-  const [pendingImport,setPendingImport]=useState<any>(null)
+  const [modelMenu, setModelMenu] = useState(false)
+  const closeModels = useCallback(() => setModelMenu(false), [])
+  const followBottom = useRef(true)
+  const modelRevisions = useRef(new Map<string, number>())
+  const [showTests, setShowTests] = useState(false),
+    [settingsTab, setSettingsTab] = useState('accounts')
+  const [pendingImport, setPendingImport] = useState<any>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const uploads = useRef<Record<string, File>>({})
   const sending = useRef(new Set<string>())
@@ -83,6 +90,7 @@ function App() {
   const [limits, setLimits] = useState({ maxConcurrent: 4, maxPeerHops: 5 })
   useEffect(() => {
     setModal('')
+    setModelMenu(false)
     setDetails(false)
     setFlow(null)
     setProviders(null)
@@ -104,6 +112,46 @@ function App() {
       }),
     [update]
   )
+  const modelChanged = useCallback(
+    (value: ModelSelection) => {
+      const identity = computer + ':' + conversationKey
+      modelRevisions.current.set(identity, (modelRevisions.current.get(identity) || 0) + 1)
+      updateChat(
+        computer,
+        space.agentId,
+        c =>
+          c.runtimeId !== conversation.runtimeId
+            ? c
+            : {
+                ...c,
+                modelSelection: value,
+                ...(value.state === 'applied'
+                  ? { model: value.model || c.model, provider: value.provider || c.provider }
+                  : {})
+              },
+        conversationKey
+      )
+    },
+    [computer, space.agentId, conversationKey, conversation.runtimeId, updateChat]
+  )
+  useEffect(() => {
+    setModelMenu(false)
+    followBottom.current = true
+  }, [computer, conversationKey])
+  useEffect(() => {
+    if (!conversation.runtimeId || conversation.readOnly || !space.online) return
+    let active = true
+    const identity = computer + ':' + conversationKey,
+      revision = modelRevisions.current.get(identity) || 0
+    void rpc(computer, 'models.status', { agentId: space.agentId, runtimeId: conversation.runtimeId })
+      .then(value => {
+        if (active && value.state && revision === (modelRevisions.current.get(identity) || 0)) modelChanged(value)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [computer, space.agentId, conversation.runtimeId, conversation.running, !!conversation.stream, space.online, modelChanged])
   useEffect(() => {
     const timer = setTimeout(() => saveSpaces(spaces), 150)
     return () => clearTimeout(timer)
@@ -151,6 +199,17 @@ function App() {
       socket: WebSocket | undefined,
       retry: ReturnType<typeof setTimeout> | undefined,
       delay = 500
+    let deltaTimer: ReturnType<typeof setTimeout> | undefined
+    let deltas: any[] = []
+    const flushDeltas = () => {
+      clearTimeout(deltaTimer)
+      deltaTimer = undefined
+      const batch = deltas
+      deltas = []
+      if (!batch.length) return
+      update(computer, s => batch.reduce(reduceEvent, s))
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'cursor', seq: batch.at(-1).seq }))
+    }
     const connect = () => {
       const url = new URL('/api/events', location.origin)
       url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -169,15 +228,28 @@ function App() {
           if (frame.online) void roster(computer)
         }
         if (frame.type === 'event') {
-          if(frame.kind==='peer.approval_required')setNotice('An agent is waiting for a trusted connection. Open Trusted connections to review who may collaborate.')
+          if (frame.kind === 'message.delta') {
+            deltas.push(frame)
+            deltaTimer ??= setTimeout(flushDeltas, 32)
+            return
+          }
+          flushDeltas()
+          if (frame.kind === 'peer.approval_required')
+            setNotice(
+              'An agent is waiting for a trusted connection. Open Trusted connections to review who may collaborate.'
+            )
           update(computer, s => reduceEvent(s, frame))
           socket?.send(JSON.stringify({ type: 'cursor', seq: frame.seq }))
-          if (frame.kind === 'agents.changed') void roster(computer)
+          if (frame.kind === 'agents.changed') {
+            invalidateModels(computer)
+            void roster(computer)
+          }
           if (frame.kind === 'message.complete')
             update(computer, s => ({ ...s, approvals: s.approvals.filter(a => a.runtimeId !== frame.runtimeId) }))
         }
       }
       socket.onclose = () => {
+        flushDeltas()
         if (!disposed) {
           update(computer, s => ({ ...s, online: false }))
           retry = setTimeout(connect, delay)
@@ -188,6 +260,7 @@ function App() {
     connect()
     return () => {
       disposed = true
+      flushDeltas()
       clearTimeout(retry)
       socket?.close()
     }
@@ -197,7 +270,7 @@ function App() {
       void open(computer, agent.id, conversation.sessionId || undefined)
   }, [computer, agent?.id, space.online, conversation.runtimeId])
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: 'instant' })
+    if (followBottom.current) bottom.current?.scrollIntoView({ behavior: 'instant' })
   }, [computer, space.agentId, conversation.messages.length, conversation.stream])
   async function open(id: string, aid: string, sessionId?: string, force = false) {
     const s = spacesRef.current[id] || blankSpace(),
@@ -260,6 +333,7 @@ function App() {
       (!text && !c.attachments.length && !c.pendingSend) ||
       !c.runtimeId ||
       c.running ||
+      c.modelSelection?.state === 'error' ||
       c.attachments.some(a => a.status !== 'ready')
     )
       return
@@ -475,6 +549,12 @@ function App() {
       key
     )
   }
+  const expandMessage = useCallback(
+    (id: string | number, offset: number) => {
+      void moreMessage(id, offset).catch(e => setNotice(e.message))
+    },
+    [computer, space.agentId, conversationKey, conversation.sessionId]
+  )
   async function createAgent(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
@@ -504,14 +584,11 @@ function App() {
     try {
       const result = await prepareImport(file, computer, percent => {
         if (selectionRef.current === context)
-          setNotice(
-            percent === 100
-              ? 'Transfer complete. Preparing your review…'
-              : `Transferring ${percent}%…`
-          )
+          setNotice(percent === 100 ? 'Transfer complete. Preparing your review…' : `Transferring ${percent}%…`)
       })
       if (selectionRef.current !== context) return
-      setPendingImport({...result,computer,name:file.name});setNotice('Review the selected export before applying it.')
+      setPendingImport({ ...result, computer, name: file.name })
+      setNotice('Review the selected export before applying it.')
     } catch (e) {
       setNotice((e as Error).message)
     } finally {
@@ -594,7 +671,8 @@ function App() {
         <div className="studio-brand">
           <img className="studio-brand-icon" src="/studio-icon.png" />
           <h1>
-            {BRAND.name}<span>{BRAND.byline}</span>
+            {BRAND.name}
+            <span>{BRAND.byline}</span>
           </h1>
         </div>
         <div className="computer-picker">
@@ -644,10 +722,18 @@ function App() {
             ＋
           </button>
         </div>
-        {space.agents.some(isTestAgent) && <button className="test-agents-toggle" onClick={() => setShowTests(v => !v)}>{showTests ? "Hide test agents" : "Test agents"}</button>}
+        {space.agents.some(isTestAgent) && (
+          <button className="test-agents-toggle" onClick={() => setShowTests(v => !v)}>
+            {showTests ? 'Hide test agents' : 'Test agents'}
+          </button>
+        )}
         <nav className="roster">
           {space.agents
-            .filter(a => (showTests || !isTestAgent(a) || a.id === space.agentId) && (a.name + ' ' + a.description).toLowerCase().includes(search.toLowerCase()))
+            .filter(
+              a =>
+                (showTests || !isTestAgent(a) || a.id === space.agentId) &&
+                (a.name + ' ' + a.description).toLowerCase().includes(search.toLowerCase())
+            )
             .map(a => (
               <button
                 data-studio-bot-row
@@ -655,7 +741,12 @@ function App() {
                 aria-current={a.id === space.agentId ? 'page' : undefined}
                 onClick={() => update(computer, s => ({ ...s, agentId: a.id }))}
               >
-                <span className={'avatar ' + (a.head ? 'head' : '')}>{a.head ? '✳' : initials(a.name)}</span>
+                <AgentAvatar
+                  name={title(a)}
+                  identity={computer + ':' + a.id}
+                  head={a.head}
+                  working={currentConversation(space, a.id).running}
+                />
                 <span className="agent-label">
                   <strong>{title(a)}</strong>
                   <small>
@@ -691,14 +782,22 @@ function App() {
           >
             ↥ &nbsp; Import from Hermes
           </button>
-          <button disabled={!agent} onClick={() => setDetails(true)}>◈ &nbsp; Profiles & skills</button>
-          <button disabled={!computer} onClick={() => setModal('files')}>▤ &nbsp; Computer files</button>
-          <button disabled={!computer} onClick={() => setModal('connections')}>⇄ &nbsp; Trusted connections</button>
+          <button disabled={!agent} onClick={() => setDetails(true)}>
+            ◈ &nbsp; Profiles & skills
+          </button>
+          <button disabled={!computer} onClick={() => setModal('files')}>
+            ▤ &nbsp; Computer files
+          </button>
+          <button disabled={!computer} onClick={() => setModal('connections')}>
+            ⇄ &nbsp; Trusted connections
+          </button>
           <button disabled={!computer} onClick={() => void settings()}>
             ⚙ &nbsp; Settings & subscriptions
           </button>
           <div className="owner">
-            <span className="avatar small">GS</span>
+            <span className="avatar small" aria-hidden="true">
+              ⌂
+            </span>
             <span>
               Private workspace<small>Hermes on your computers</small>
             </span>
@@ -718,7 +817,13 @@ function App() {
       </aside>
       <section className="conversation">
         <header data-hermes-bot-chat-header>
-          <span className="avatar small">{agent?.head ? '✳' : initials(agent?.name || '')}</span>
+          <AgentAvatar
+            name={agent ? title(agent) : 'Agent'}
+            identity={computer + ':' + space.agentId}
+            head={agent?.head}
+            small
+            working={conversation.running}
+          />
           <div>
             <strong>{agent ? title(agent) : 'Your workspace'}</strong>
             <small>{selected?.name || 'Connect a computer to begin'}</small>
@@ -738,7 +843,13 @@ function App() {
         {(space.error || conversation.error) && (
           <div className="error-banner" role="alert">
             {conversation.error || space.error}
-            <button onClick={() => selected?.online ? void open(computer, space.agentId, conversation.sessionId || undefined, true) : setModal('computers')}>
+            <button
+              onClick={() =>
+                selected?.online
+                  ? void open(computer, space.agentId, conversation.sessionId || undefined, true)
+                  : setModal('computers')
+              }
+            >
               {selected?.online ? 'Reconnect conversation' : 'Connect / Repair computer'}
             </button>
           </div>
@@ -751,7 +862,14 @@ function App() {
           revision={conversation.messages.length}
           enabled={!!space.capabilities.files}
         />
-        <div className="transcript" data-chat-surface>
+        <div
+          className="transcript"
+          data-chat-surface
+          onScroll={e => {
+            const el = e.currentTarget
+            followBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+          }}
+        >
           {conversation.hasMore && (
             <button className="older" onClick={() => void older()}>
               Load earlier messages
@@ -760,7 +878,11 @@ function App() {
           {conversation.loading && <div className="loading-line">Opening conversation…</div>}
           {!conversation.messages.length && !conversation.loading && (
             <div className="empty-conversation">
-              <span className="empty-mark">✳</span>
+              <AgentAvatar
+                name={agent ? title(agent) : 'Agent'}
+                identity={computer + ':' + space.agentId}
+                head={agent?.head}
+              />
               <h2>{agent ? 'What are we working on?' : 'Your computers, together.'}</h2>
               <p>
                 {agent
@@ -787,32 +909,25 @@ function App() {
           {conversation.messages
             .filter(m => ['user', 'assistant', 'tool'].includes(m.role))
             .map(m => (
-              <article key={m.id} className={'message ' + m.role}>
-                <div className="message-author">
-                  {m.role === 'user' ? 'You' : m.role === 'tool' ? 'Tool result' : agent ? title(agent) : 'Agent'}
-                </div>
-                {m.role === 'tool' ? (
-                  <details>
-                    <summary>View tool result</summary>
-                    <pre>{m.content}</pre>
-                  </details>
-                ) : (
-                  <Streamdown>{typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}</Streamdown>
-                )}
-                {m.truncated && (
-                  <button
-                    onClick={() =>
-                      void moreMessage(m.id, Array.from(m.content).length).catch(e => setNotice(e.message))
-                    }
-                  >
-                    Show more of this message
-                  </button>
-                )}
-              </article>
+              <ChatMessage
+                key={computer + ':' + conversationKey + ':' + m.id}
+                message={m}
+                name={agent ? title(agent) : 'Agent'}
+                identity={computer + ':' + space.agentId}
+                head={agent?.head}
+                more={expandMessage}
+              />
             ))}
           {conversation.running && (
             <article className="message assistant">
               <div className="message-author">
+                <AgentAvatar
+                  name={agent ? title(agent) : 'Agent'}
+                  identity={computer + ':' + space.agentId}
+                  head={agent?.head}
+                  small
+                  working
+                />
                 {agent ? title(agent) : 'Agent'} <i className="working" />
               </div>
               {conversation.stream ? (
@@ -943,9 +1058,45 @@ function App() {
             >
               ＋
             </button>
-            <button type="button" className="model" onClick={() => void settings()}>
-              {conversation.model || agent?.model || 'Profile model'} ⌄
-            </button>
+            <div className="composer-model">
+              <button
+                type="button"
+                className="model"
+                aria-haspopup="dialog"
+                aria-expanded={modelMenu}
+                disabled={!agent}
+                onClick={() => setModelMenu(v => !v)}
+              >
+                {conversation.model || agent?.model || 'Profile model'} ⌄
+              </button>
+              {modelMenu && (
+                <Suspense
+                  fallback={
+                    <div className="model-popover" role="status">
+                      Opening models…
+                    </div>
+                  }
+                >
+                  <ModelPicker
+                    key={computer + ':' + conversationKey}
+                    computer={computer}
+                    agent={space.agentId}
+                    runtime={conversation.runtimeId}
+                    model={conversation.model || agent?.model || ''}
+                    provider={conversation.provider || agent?.provider || ''}
+                    online={space.online}
+                    readOnly={conversation.readOnly}
+                    selection={conversation.modelSelection}
+                    changed={modelChanged}
+                    close={closeModels}
+                    connections={() => {
+                      closeModels()
+                      void settings()
+                    }}
+                  />
+                </Suspense>
+              )}
+            </div>
             <span>Runs on {selected?.name || 'Orgo'}</span>
             {conversation.running ? (
               <button
@@ -970,7 +1121,8 @@ function App() {
                   !conversation.runtimeId ||
                   (!conversation.draft.trim() && !conversation.attachments.length && !conversation.pendingSend) ||
                   conversation.attachments.some(a => a.status !== 'ready') ||
-                  conversation.loading
+                  conversation.loading ||
+                  conversation.modelSelection?.state === 'error'
                 }
               >
                 ↑
@@ -978,21 +1130,45 @@ function App() {
             )}
           </div>
         </form>
-        <div className="composer-note">Enter to send · Shift + Enter for a new line</div>
+        <div className="composer-note" role="status">
+          {conversation.modelSelection?.state === 'error' ? (
+            <button onClick={() => setModelMenu(true)}>Model needs attention · Choose a model to continue</button>
+          ) : conversation.modelSelection?.state === 'pending' ? (
+            `Next turn: ${conversation.modelSelection.model}`
+          ) : (
+            'Enter to send · Shift + Enter for a new line'
+          )}
+        </div>
       </section>
       <aside className="inspector">
         <header>
           <span>WORKSPACE</span>
           <span className="cloud-label">{selected?.kind === 'local' ? '⌘ Mac' : '☁ Orgo'}</span>
         </header>
-        {agent && (
-          selected?.kind === 'local' ? <section className="local-summary connection-card"><h3>Hermes on your Mac</h3><p><strong>{title(agent)}</strong> · {selected.name}</p><p className="small-note">Chat and files use this Mac’s Hermes profile. Sharing with another computer follows your trusted connections.</p><button onClick={() => setModal('files')}>Browse Mac files</button><button onClick={() => setDetails(true)}>Profiles, skills & memory</button></section> : <Screen
-            key={computer + ':' + agent.id}
-            computer={computer}
-            agent={agent.id}
-            enabled={!!space.capabilities.screens && space.online}
-          />
-        )}
+        {agent &&
+          (selected?.kind === 'local' ? (
+            <section className="local-summary connection-card">
+              <h3>Hermes on your Mac</h3>
+              <p>
+                <strong>{title(agent)}</strong> · {selected.name}
+              </p>
+              <p className="small-note">
+                Chat and files use this Mac’s Hermes profile. Sharing with another computer follows your trusted
+                connections.
+              </p>
+              <button onClick={() => setModal('files')}>Browse Mac files</button>
+              <button onClick={() => setDetails(true)}>Profiles, skills & memory</button>
+            </section>
+          ) : (
+            <Screen
+              key={computer + ':' + agent.id}
+              computer={computer}
+              agent={agent.id}
+              agentName={title(agent)}
+              computerName={selected?.name || 'Orgo'}
+              enabled={!!space.capabilities.screens && space.online}
+            />
+          ))}
         <section className="task-section">
           {space.approvals.map(a => (
             <div className="approval" key={a.request_id}>
@@ -1037,9 +1213,14 @@ function App() {
               .slice(0, 10)
               .map(t => (
                 <div className="task-row" key={computer + ':' + t.id}>
-                  <span className={'task-state ' + t.state} />
+                  <AgentAvatar
+                    small
+                    name={space.agents.find(a => a.id === t.recipient)?.name || t.recipient}
+                    identity={computer + ':' + t.recipient}
+                    working={['running', 'starting'].includes(t.state)}
+                  />
                   <div>
-                    <strong>{t.recipient}</strong>
+                    <strong>{space.agents.find(a => a.id === t.recipient)?.name || t.recipient}</strong>
                     <p>{t.body?.slice(0, 100)}</p>
                     <small>{t.state.replace('_', ' ')}</small>
                     <TaskActions computer={computer} task={t} changed={() => void loadTasks(computer)} />
@@ -1060,14 +1241,16 @@ function App() {
         </div>
       </aside>
       {details && agent && (
-        <Suspense fallback={<div className="toast">Opening profile…</div>}><AgentDetails
-          key={computer + ':' + agent.id}
-          computer={computer}
-          agent={agent.id}
-          name={title(agent)}
-          computerName={selected?.name || 'Orgo'}
-          close={() => setDetails(false)}
-        /></Suspense>
+        <Suspense fallback={<div className="toast">Opening profile…</div>}>
+          <AgentDetails
+            key={computer + ':' + agent.id}
+            computer={computer}
+            agent={agent.id}
+            name={title(agent)}
+            computerName={selected?.name || 'Orgo'}
+            close={() => setDetails(false)}
+          />
+        </Suspense>
       )}
       {modal && (
         <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setModal('')}>
@@ -1124,147 +1307,279 @@ function App() {
                 )}
               </>
             )}
-            {modal === 'files' && <Explorer key={computer + ':' + space.agentId} computer={computer} agent={space.agentId} local={selected?.kind === 'local'} />}
+            {modal === 'files' && (
+              <Explorer
+                key={computer + ':' + space.agentId}
+                computer={computer}
+                agent={space.agentId}
+                local={selected?.kind === 'local'}
+              />
+            )}
             {modal === 'connections' && <TrustedConnections computers={computers} current={computer} />}
-            {modal === 'import' && <HermesLibrary key={computer} computer={computer} name={selected?.name || 'this computer'} computers={computers} localSetup={() => setModal('local')} fallback={<>
-              {pendingImport?.computer===computer&&<div className="connection-card"><strong>Review {pendingImport.name}</strong>{pendingImport.preview.profiles.map((p:any)=><p key={p.source}>{p.source}: {p.newProfile?'new profile':p.target} · {p.added} added · {p.changed} changed · {p.conflicts} conflicts preserved</p>)}<p className="small-note">Credentials are excluded. Imported scripts do not run during transfer.</p>{pendingImport.preview.warnings.map((w:string)=><p className="small-note" key={w}>{w}</p>)}<button className="primary" disabled={busy} onClick={()=>{const current=pendingImport;setBusy(true);void current.apply().then((r:any)=>{setPendingImport(null);setNotice(`Imported ${r.profiles.length} profiles. Conflicting edits were preserved.`);return roster(current.computer)}).catch((e:Error)=>setNotice(e.message)).finally(()=>setBusy(false))}}>Apply reviewed export</button><button onClick={()=>setPendingImport(null)}>Cancel</button></div>}
-              <div className="import-dropzone" onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }} onDrop={e => { e.preventDefault(); if (!busy && e.dataTransfer.files[0]) void importFile(e.dataTransfer.files[0]) }}><p>Drop a Hermes export here, or choose a file.</p><label className="file-input">{busy ? 'Importing…' : 'Choose a Hermes export'}<input type="file" accept=".json,.zip" disabled={busy} onChange={e => e.target.files?.[0] && void importFile(e.target.files[0])} /></label></div>
-              <p className="small-note">Choose a destination-bound Studio export. Existing agents and cloud edits are preserved.</p>
-              {names.map((n,i) => <p className="small-note" key={i}>{n.title}</p>)}
-            </>} />}
-            {modal === 'local' && <LocalSetup computers={computers} select={id => { void refreshComputers(); setComputer(id); setModal('') }} />}
-            {modal === 'computers' && <ComputerManager initialComputer={computer} localSetup={() => setModal('local')} select={id => { setComputer(id); setModal('') }} refresh={refreshComputers} />}
+            {modal === 'import' && (
+              <HermesLibrary
+                key={computer}
+                computer={computer}
+                agent={space.agentId}
+                name={selected?.name || 'this computer'}
+                computers={computers}
+                localSetup={() => setModal('local')}
+                fallback={
+                  <>
+                    {pendingImport?.computer === computer && (
+                      <div className="connection-card">
+                        <strong>Review {pendingImport.name}</strong>
+                        {pendingImport.preview.profiles.map((p: any) => (
+                          <p key={p.source}>
+                            {p.source}: {p.newProfile ? 'new profile' : p.target} · {p.added} added · {p.changed}{' '}
+                            changed · {p.conflicts} conflicts preserved
+                          </p>
+                        ))}
+                        <p className="small-note">
+                          Credentials are excluded. Imported scripts do not run during transfer.
+                        </p>
+                        {pendingImport.preview.warnings.map((w: string) => (
+                          <p className="small-note" key={w}>
+                            {w}
+                          </p>
+                        ))}
+                        <button
+                          className="primary"
+                          disabled={busy}
+                          onClick={() => {
+                            const current = pendingImport
+                            setBusy(true)
+                            void current
+                              .apply()
+                              .then((r: any) => {
+                                setPendingImport(null)
+                                setNotice(`Imported ${r.profiles.length} profiles. Conflicting edits were preserved.`)
+                                invalidateModels(current.computer)
+                                return roster(current.computer)
+                              })
+                              .catch((e: Error) => setNotice(e.message))
+                              .finally(() => setBusy(false))
+                          }}
+                        >
+                          Apply reviewed export
+                        </button>
+                        <button onClick={() => setPendingImport(null)}>Cancel</button>
+                      </div>
+                    )}
+                    <div
+                      className="import-dropzone"
+                      onDragOver={e => {
+                        if (e.dataTransfer.types.includes('Files')) e.preventDefault()
+                      }}
+                      onDrop={e => {
+                        e.preventDefault()
+                        if (!busy && e.dataTransfer.files[0]) void importFile(e.dataTransfer.files[0])
+                      }}
+                    >
+                      <p>Drop a Hermes export here, or choose a file.</p>
+                      <label className="file-input">
+                        {busy ? 'Importing…' : 'Choose a Hermes export'}
+                        <input
+                          type="file"
+                          accept=".json,.zip"
+                          disabled={busy}
+                          onChange={e => e.target.files?.[0] && void importFile(e.target.files[0])}
+                        />
+                      </label>
+                    </div>
+                    <p className="small-note">
+                      Choose a destination-bound Studio export. Existing agents and cloud edits are preserved.
+                    </p>
+                    {names.map((n, i) => (
+                      <p className="small-note" key={i}>
+                        {n.title}
+                      </p>
+                    ))}
+                  </>
+                }
+              />
+            )}
+            {modal === 'local' && (
+              <LocalSetup
+                computers={computers}
+                select={id => {
+                  void refreshComputers()
+                  setComputer(id)
+                  setModal('')
+                }}
+              />
+            )}
+            {modal === 'computers' && (
+              <ComputerManager
+                initialComputer={computer}
+                localSetup={() => setModal('local')}
+                select={id => {
+                  setComputer(id)
+                  setModal('')
+                }}
+                refresh={refreshComputers}
+              />
+            )}
             {modal === 'settings' && (
               <>
                 <h2>Settings & subscriptions</h2>
                 <p>
                   {agent && title(agent)} · {selected?.name}
                 </p>
-                <Suspense fallback={<p>Opening Hermes settings…</p>}><ModelPicker key={computer + ':' + space.agentId + ':' + conversation.runtimeId}
-                  computer={computer} agent={space.agentId} runtime={conversation.runtimeId}
-                  model={conversation.model || agent?.model || ''} provider={conversation.provider || agent?.provider || ''}
-                  changed={value => updateChat(computer, space.agentId, c => ({ ...c, ...value }))} /></Suspense>
-                <details><summary>Computer task limits</summary>
-                <h3>Computer task limits</h3>
-                <label>
-                  Concurrent agent turns
-                  <input
-                    type="number"
-                    min={1}
-                    max={16}
-                    value={limits.maxConcurrent}
-                    onChange={e => setLimits(v => ({ ...v, maxConcurrent: Number(e.target.value) }))}
+                <Suspense fallback={<p>Opening Hermes settings…</p>}>
+                  <ModelPicker
+                    key={computer + ':' + space.agentId + ':' + conversation.runtimeId}
+                    computer={computer}
+                    agent={space.agentId}
+                    runtime={conversation.runtimeId}
+                    model={conversation.model || agent?.model || ''}
+                    provider={conversation.provider || agent?.provider || ''}
+                    online={space.online}
+                    readOnly={conversation.readOnly}
+                    selection={conversation.modelSelection}
+                    changed={modelChanged}
                   />
-                </label>
-                <label>
-                  Cross-computer delegation hops
-                  <input
-                    type="number"
-                    min={1}
-                    max={5}
-                    value={limits.maxPeerHops}
-                    onChange={e => setLimits(v => ({ ...v, maxPeerHops: Number(e.target.value) }))}
-                  />
-                </label>
-                <button
-                  onClick={async () => {
-                    try {
-                      await rpc(computer, 'settings.update', limits)
-                      setNotice('Computer task limits saved.')
-                    } catch (e) {
-                      setNotice((e as Error).message)
-                    }
-                  }}
-                >
-                  Save task limits
-                </button>
-                <p className="small-note">
-                  Existing per-profile turn limits are retained. Additional turns share this computer's available
-                  resources.
-                </p>
+                </Suspense>
+                <details>
+                  <summary>Computer task limits</summary>
+                  <h3>Computer task limits</h3>
+                  <label>
+                    Concurrent agent turns
+                    <input
+                      type="number"
+                      min={1}
+                      max={16}
+                      value={limits.maxConcurrent}
+                      onChange={e => setLimits(v => ({ ...v, maxConcurrent: Number(e.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    Cross-computer delegation hops
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={limits.maxPeerHops}
+                      onChange={e => setLimits(v => ({ ...v, maxPeerHops: Number(e.target.value) }))}
+                    />
+                  </label>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await rpc(computer, 'settings.update', limits)
+                        setNotice('Computer task limits saved.')
+                      } catch (e) {
+                        setNotice((e as Error).message)
+                      }
+                    }}
+                  >
+                    Save task limits
+                  </button>
+                  <p className="small-note">
+                    Existing per-profile turn limits are retained. Additional turns share this computer's available
+                    resources.
+                  </p>
                 </details>
                 <div className="settings-tabs" role="tablist" aria-label="Provider settings">
-                  {[['accounts','Subscriptions'],['keys','API keys'],['endpoints','Custom endpoints']].map(([id,label]) => <button key={id} role="tab" aria-selected={settingsTab === id} onClick={() => setSettingsTab(id)}>{label}</button>)}
-                </div>
-                {settingsTab === 'keys' && <ProviderKeys key={computer + ':' + space.agentId} computer={computer} agent={space.agentId} />}
-                {settingsTab === 'endpoints' && <Suspense fallback={<p>Opening endpoints…</p>}><Endpoints key={computer + ':' + space.agentId} computer={computer} agent={space.agentId} /></Suspense>}
-                {settingsTab === 'accounts' && <>
-                <h3>Connect a subscription</h3>
-                <div className="provider-buttons">
-                  <button disabled={busy} onClick={() => void authenticate('openai-codex')}>
-                    ChatGPT / Codex
-                  </button>
-                  <button disabled={busy} onClick={() => void authenticate('anthropic')}>
-                    Claude
-                  </button>
-                </div>
-                {flow && (
-                  <div className="auth-flow">
-                    <p>{flow.message || flow.status}</p>
-                    {flow.url && (
-                      <a href={flow.url} target="_blank" rel="noreferrer">
-                        Open provider sign-in ↗
-                      </a>
-                    )}
-                    {flow.code && <code>{flow.code}</code>}
-                    {flow.status === 'acknowledgment_required' && (
-                      <button onClick={() => void authenticate('anthropic', true)}>
-                        Continue with Max extra usage
-                      </button>
-                    )}
-                    {flow.flow === 'pkce' && (
-                      <form
-                        onSubmit={async e => {
-                          e.preventDefault()
-                          const code = new FormData(e.currentTarget).get('code')
-                          try {
-                            setFlow(
-                              await rpc(computer, 'providers.submit', {
-                                agentId: space.agentId,
-                                flowId: flow.flowId,
-                                code
-                              })
-                            )
-                          } catch (e) {
-                            setNotice((e as Error).message)
-                          }
-                        }}
-                      >
-                        <label>
-                          Authorization code
-                          <input name="code" type="password" required />
-                        </label>
-                        <button>Complete connection</button>
-                      </form>
-                    )}
-                    <button
-                      disabled={!flow.flowId}
-                      onClick={async () => {
-                        try {
-                          setFlow(
-                            await rpc(computer, 'providers.status', { agentId: space.agentId, flowId: flow.flowId })
-                          )
-                        } catch (e) {
-                          setNotice((e as Error).message)
-                        }
-                      }}
-                    >
-                      Check connection
+                  {[
+                    ['accounts', 'Subscriptions'],
+                    ['keys', 'API keys'],
+                    ['endpoints', 'Custom endpoints']
+                  ].map(([id, label]) => (
+                    <button key={id} role="tab" aria-selected={settingsTab === id} onClick={() => setSettingsTab(id)}>
+                      {label}
                     </button>
-                  </div>
-                )}
-                <div className="provider-list">
-                  {providers?.providers
-                    ?.filter((p: any) => ['openai-codex', 'anthropic'].includes(p.id))
-                    .map((p: any) => (
-                      <p key={p.id}>
-                        <strong>{p.name}</strong> · {p.connected ? 'Connected' : 'Not connected'}
-                        {p.expiresAt && <small> · Expires {new Date(p.expiresAt).toLocaleString()}</small>}
-                        {p.notice && <small className="small-note">{p.notice}</small>}
-                      </p>
-                    ))}
+                  ))}
                 </div>
-                </>}
+                {settingsTab === 'keys' && (
+                  <ProviderKeys key={computer + ':' + space.agentId} computer={computer} agent={space.agentId} />
+                )}
+                {settingsTab === 'endpoints' && (
+                  <Suspense fallback={<p>Opening endpoints…</p>}>
+                    <Endpoints key={computer + ':' + space.agentId} computer={computer} agent={space.agentId} />
+                  </Suspense>
+                )}
+                {settingsTab === 'accounts' && (
+                  <>
+                    <h3>Connect a subscription</h3>
+                    <div className="provider-buttons">
+                      <button disabled={busy} onClick={() => void authenticate('openai-codex')}>
+                        ChatGPT / Codex
+                      </button>
+                      <button disabled={busy} onClick={() => void authenticate('anthropic')}>
+                        Claude
+                      </button>
+                    </div>
+                    {flow && (
+                      <div className="auth-flow">
+                        <p>{flow.message || flow.status}</p>
+                        {flow.url && (
+                          <a href={flow.url} target="_blank" rel="noreferrer">
+                            Open provider sign-in ↗
+                          </a>
+                        )}
+                        {flow.code && <code>{flow.code}</code>}
+                        {flow.status === 'acknowledgment_required' && (
+                          <button onClick={() => void authenticate('anthropic', true)}>
+                            Continue with Max extra usage
+                          </button>
+                        )}
+                        {flow.flow === 'pkce' && (
+                          <form
+                            onSubmit={async e => {
+                              e.preventDefault()
+                              const code = new FormData(e.currentTarget).get('code')
+                              try {
+                                setFlow(
+                                  await rpc(computer, 'providers.submit', {
+                                    agentId: space.agentId,
+                                    flowId: flow.flowId,
+                                    code
+                                  })
+                                )
+                                invalidateModels(computer, space.agentId)
+                              } catch (e) {
+                                setNotice((e as Error).message)
+                              }
+                            }}
+                          >
+                            <label>
+                              Authorization code
+                              <input name="code" type="password" required />
+                            </label>
+                            <button>Complete connection</button>
+                          </form>
+                        )}
+                        <button
+                          disabled={!flow.flowId}
+                          onClick={async () => {
+                            try {
+                              setFlow(
+                                await rpc(computer, 'providers.status', { agentId: space.agentId, flowId: flow.flowId })
+                              )
+                              invalidateModels(computer, space.agentId)
+                            } catch (e) {
+                              setNotice((e as Error).message)
+                            }
+                          }}
+                        >
+                          Check connection
+                        </button>
+                      </div>
+                    )}
+                    <div className="provider-list">
+                      {providers?.providers
+                        ?.filter((p: any) => ['openai-codex', 'anthropic'].includes(p.id))
+                        .map((p: any) => (
+                          <p key={p.id}>
+                            <strong>{p.name}</strong> · {p.connected ? 'Connected' : 'Not connected'}
+                            {p.expiresAt && <small> · Expires {new Date(p.expiresAt).toLocaleString()}</small>}
+                            {p.notice && <small className="small-note">{p.notice}</small>}
+                          </p>
+                        ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
             {notice && (

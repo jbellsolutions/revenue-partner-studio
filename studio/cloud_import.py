@@ -223,6 +223,11 @@ def apply_bundle(home: Path, computer_id: str, bundle: dict, busy_profiles=(), _
     import fcntl
     with (base / 'import.lock').open('a+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if bundle.get('scope') == 'skills':
+            from .cloud_skills import apply_locked
+            return apply_locked(home, computer_id, bundle, set(busy_profiles), _archive_root)
+        if bundle.get('scope') not in (None, 'profiles'):
+            raise ValueError('Unsupported import scope')
         return _apply_locked(home, computer_id, bundle, set(busy_profiles), _archive_root)
 
 

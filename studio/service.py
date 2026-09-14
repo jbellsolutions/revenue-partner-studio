@@ -230,6 +230,13 @@ class Service:
                         result=apply_archive(self.home,verify_binding(),p['archive'],busy)
                     else: result=apply_bundle(self.home,verify_binding(),p['bundle'],busy)
                     self.adopt_profiles()
+                    if result.get('scope') == 'skills':
+                        targets={row['target'] for row in result['profiles']}
+                        for session in self.server._sessions.values():
+                            path=Path(session.get('profile_home') or self.home)
+                            name='default' if path==self.home else path.name
+                            agent=session.get('agent')
+                            if name in targets and agent is not None:agent._invalidate_system_prompt()
                     return result
                 finally:
                     with self.turn_lock:self.importing=False
@@ -491,7 +498,7 @@ def register(server):
         try: return server._ok(rid,dispatch(_service,params))
         except Exception as exc: return server._err(rid,4096,str(exc))
     server._methods['studio.a2a']=a2a
-    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'limits':_service.settings()})
+    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'limits':_service.settings()})
     server._methods['studio.snapshot']=lambda rid,params:server._ok(rid,_service.snapshot())
     def events(rid,params):
         if params.get('summary'):

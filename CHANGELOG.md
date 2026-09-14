@@ -1,3 +1,12 @@
+## Revenue Partner Studio v0.2.0-beta.2
+
+- Chat model menu with connected-provider search, manual IDs, pending/error feedback and computer/profile/conversation isolation.
+- Shared bot avatars, quieter controls, batched streaming and retained rendered messages; history reading no longer forces scrolling.
+- Visible pointer when watching screens; fullscreen keeps ownership and takeover controls.
+- Reviewed selected-skill transfers into an existing agent, preserving profile configuration, credentials, memory, history and conflicts. Requires a compatible Studio extension on both computers.
+- Clearer Mac companion/import instructions, updated public demo and preparation pack, and exact-origin support for the new application domain.
+- See docs/RELEASE-CHECKS.md for verified checks and remaining domain, runtime promotion, browser and reliability gates.
+
 # Changelog
 
 ## 0.2.0-beta.1

@@ -1,6 +1,6 @@
 {
   "name": "revenue-partner-studio",
-  "version": "0.2.0-beta.1",
+  "version": "0.2.0-beta.2",
   "description": "Revenue Partner Studio by Your AI Guy \u2014 a private browser workspace for Hermes agents on your computers.",
   "private": true,
   "workspaces": [
@@ -34,7 +34,7 @@
   "bugs": {
     "url": "https://github.com/jbellsolutions/revenue-partner-studio/issues"
   },
-  "homepage": "https://betterthangrokbot.com",
+  "homepage": "https://revenuepartnerstudio.com",
   "devDependencies": {
     "@eslint/js": "9.39.5",
     "eslint-plugin-perfectionist": "5.10.0",

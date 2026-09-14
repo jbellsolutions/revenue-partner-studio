@@ -1,3 +1,4 @@
+import { trustedOrigins } from './origins.ts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
@@ -14,6 +15,7 @@ type Options = {
   store: Store
   password: string
   origin: string
+  allowedOrigins?: string[]
   publicDir?: string
   control?: ControlStore
   setupDir?: string
@@ -100,7 +102,8 @@ export function createGateway(options: Options) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 70 * 1024 * 1024, perMessageDeflate: false })
   const token = (req: IncomingMessage) => /(?:^|;\s*)studio_session=([^;]+)/.exec(req.headers.cookie || '')?.[1] || ''
   const authenticated = (req: IncomingMessage) => store.authenticated(token(req))
-  const sameOrigin = (req: IncomingMessage) => req.headers.origin === origin
+  const origins = trustedOrigins(origin, options.allowedOrigins)
+  const sameOrigin = (req: IncomingMessage) => !!req.headers.origin && origins.has(req.headers.origin)
   const send = (ws: WebSocket, value: unknown) => {
     if (ws.readyState === WebSocket.OPEN) {
       if (ws.bufferedAmount > 8 * 1024 * 1024) {

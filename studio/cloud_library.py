@@ -22,24 +22,28 @@ class Library:
             meta=yaml.safe_load((p/'profile.yaml').read_text()) if (p/'profile.yaml').is_file() else {}
             rows.append({'id':name,'name':(meta or {}).get('name') or name})
         return {'profiles':rows,'sourcePath':str(self.home),'credentialsExcluded':True}
-    def export(self,target,profiles,request):
+    def export(self,target,profiles,request,selection=None):
         uuid.UUID(target)
         if not profiles or not isinstance(profiles,list) or len(profiles)>100:raise ValueError('Select between one and 100 Hermes profiles.')
         allowed={p['id'] for p in self.profiles()['profiles']}
         if any(p not in allowed for p in profiles):raise ValueError('A selected Hermes profile is unavailable.')
+        if selection:
+            from .cloud_skills import selection as validate
+            selection=validate(selection.get('sourceProfile'),selection.get('skillIds'),selection.get('targetAgent'))
+            if profiles != [selection['sourceProfile']]:raise ValueError('Skill source profile mismatch')
         identity=hashlib.sha256(request.encode()).hexdigest()
         self.base.mkdir(parents=True,exist_ok=True,mode=0o700)
         meta=self.base/(identity+'.json');archive=self.base/(identity+'.zip')
         if meta.exists():
             saved=json.loads(meta.read_text())
-            if saved['computerId']!=target or saved['profiles']!=profiles:raise ValueError('Export request belongs to another selection.')
+            if saved['computerId']!=target or saved['profiles']!=profiles or saved.get('selection')!=selection:raise ValueError('Export request belongs to another selection.')
             return saved
         if archive.exists():archive.unlink() # Only an unpublished interrupted export.
-        path,bundle=build_archive(self.home,target,archive,profiles)
+        path,bundle=build_archive(self.home,target,archive,profiles,selection)
         path.replace(archive)
         path=archive
         manifest={**bundle,'profiles':{name:{'files':{key:{k:v for k,v in item.items() if k in {'sha256','size','mode'}} for key,item in profile['files'].items()}} for name,profile in bundle['profiles'].items()}}
-        value={'exportId':identity,'computerId':target,'profiles':profiles,'manifest':manifest,'size':path.stat().st_size,'sha256':digest(path),'created':time.time()}
+        value={'selection':selection,'exportId':identity,'computerId':target,'profiles':profiles,'manifest':manifest,'size':path.stat().st_size,'sha256':digest(path),'created':time.time()}
         atomic_write(meta,json.dumps(value).encode())
         return value
     def chunk(self,identity,offset):
@@ -50,6 +54,9 @@ class Library:
         with (self.base/(identity+'.zip')).open('rb') as f:f.seek(offset);data=f.read(1024*1024)
         return {'data':base64.b64encode(data).decode(),'offset':offset,'sha256':digest(data),'size':len(data)}
     def preview(self,computer,manifest):
+        if manifest.get('scope')=='skills':
+            from .cloud_skills import preview
+            return preview(self.home,computer,manifest)
         if manifest.get('computerId')!=computer:raise ValueError('Import preview belongs to another computer.')
         source=manifest.get('sourceId','')
         if not re.fullmatch(r'[a-f0-9]{24}',source):raise ValueError('Invalid import provenance.')

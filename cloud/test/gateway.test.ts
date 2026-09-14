@@ -11,12 +11,12 @@ const A = '10000000-0000-4000-8000-000000000001',
   B = '10000000-0000-4000-8000-000000000002'
 const origin = 'http://studio.test',
   password = 'a-test-password-long-enough'
-async function fixture(t: any) {
+async function fixture(t: any, allowedOrigins: string[] = []) {
   const dir = mkdtempSync(join(tmpdir(), 'studio-gateway-'))
   const store = new Store(join(dir, 'state.db'))
   const a = store.addComputer(A, 'Same name'),
     b = store.addComputer(B, 'Same name')
-  const gateway = createGateway({ store, password, origin })
+  const gateway = createGateway({ store, password, origin, allowedOrigins })
   gateway.server.listen(0, '127.0.0.1')
   await once(gateway.server, 'listening')
   const url = 'http://127.0.0.1:' + (gateway.server.address() as any).port
@@ -208,4 +208,17 @@ test('connection check requires an existing directional grant, verifies both age
   await f.post('/api/grants/revoke',{id:grant.id})
   assert.equal((await f.post('/api/grants/check',params)).status,403)
   assert.equal(f.gateway.control.grants().length,1)
+})
+
+test('custom app origin and previous origin work without trusting public site or sibling origins', async t => {
+  const app = 'https://app.example.test'
+  const f = await fixture(t, [app])
+  const login = await f.post('/api/login', { password }, { Origin: app })
+  assert.equal(login.status, 200)
+  assert.ok(!login.headers.get('set-cookie')?.includes('Domain='), 'cookies must remain host scoped')
+  assert.notEqual((await f.post('/api/computers', {}, { Origin: app })).status, 403)
+  for (const bad of ['https://example.test', app + '.evil.test', app + '/', 'null'])
+    assert.equal((await f.post('/api/login', { password }, { Origin: bad })).status, 403)
+  const viewer = await f.ws('/api/events?computerId=' + A, { Origin: app, Cookie: f.cookie })
+  viewer.socket.close()
 })

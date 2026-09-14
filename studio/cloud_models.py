@@ -26,8 +26,13 @@ def binding(service, params):
 def status(session, path):
     saved = json.loads(path.read_text()) if path.exists() else {}
     agent = session.get('agent')
-    return {'model': getattr(agent, 'model', '') or saved.get('model', ''),
-            'provider': getattr(agent, 'provider', '') or saved.get('provider', ''), **saved}
+    override = session.get('model_override') or {}
+    if isinstance(override, str):
+        override = {'model': override}
+    model = getattr(agent, 'model', '') or override.get('model', '')
+    provider = getattr(agent, 'provider', '') or override.get('provider', '')
+    return {'model': model, 'provider': provider, 'state': 'applied', **saved,
+            'activeModel': model, 'activeProvider': provider}
 
 
 def apply(service, params):
@@ -52,7 +57,9 @@ def apply(service, params):
             raise ValueError(result.get('confirm_message') or 'This model requires additional cost confirmation in Hermes.')
         if result.get('deferred'):
             raise ValueError('The agent is still working. Choose the model again after this turn.')
-        value = {**value, 'state': 'applied', 'error': ''}
+        value = {**value, 'model': result.get('value') or value['model'], 'state': 'applied', 'error': ''}
+        value['activeModel'] = value['model']
+        value['activeProvider'] = value['provider']
     except Exception:
         # Provider exceptions may contain endpoint credentials. Persist only safe copy.
         value = {**value, 'state': 'error', 'error': 'The selected model could not be activated. Check its connection and choose a model again. No message was sent using a fallback.'}
@@ -77,6 +84,6 @@ def operation(service, params):
             if not isinstance(provider, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:\-]{0,99}', provider):
                 raise ValueError('Choose a provider')
             atomic_write(path, json.dumps({'model': model, 'provider': provider, 'state': 'pending', 'error': ''}).encode())
-        if session.get('running'):
+        if params['operation'] == 'model_status' or session.get('running'):
             return status(session, path)
         return apply(service, params)

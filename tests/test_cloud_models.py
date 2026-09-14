@@ -44,3 +44,20 @@ def test_switch_cannot_target_sibling_or_inject_model_flags(tmp_path):
     p={'operation':'model_select','agentId':'email','runtimeId':'r','provider':'openrouter','model':'x'}
     with pytest.raises(ValueError,match='selected agent'):operation(service,p)
     with pytest.raises(ValueError,match='model ID'):operation(service,{**p,'agentId':'default','model':'x --global'})
+
+
+def test_status_reports_active_separately_and_does_not_apply_pending_or_throw_saved_error(tmp_path):
+    service=make_service(tmp_path);session=conversation(service,tmp_path)
+    p={'operation':'model_status','agentId':'default','runtimeId':'r'}
+    value=operation(service,p)
+    assert value['activeModel']=='old' and value['state']=='applied'
+    session['running']=True
+    operation(service,{**p,'operation':'model_select','provider':'openrouter','model':'new'})
+    session['running']=False
+    service.rpc=lambda *a,**k: (_ for _ in ()).throw(AssertionError('Status must not activate a model'))
+    value=operation(service,p)
+    assert value['activeModel']=='old' and value['model']=='new' and value['state']=='pending'
+    path=next((tmp_path/'studio/model-selections').glob('*.json'))
+    import json
+    path.write_text(json.dumps({'model':'new','provider':'openrouter','state':'error','error':'Choose another model'}))
+    assert operation(service,p)['state']=='error'

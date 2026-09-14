@@ -1,4 +1,5 @@
 import { rpc } from './api'
+import { invalidateModels } from './model-catalog'
 
 /** Browser transport for the inherited Hermes workflows. Never uses a global gateway. */
 export function hermesAdapter(computer: string, profile: string, runtimeId?: string) {
@@ -12,6 +13,7 @@ export function hermesAdapter(computer: string, profile: string, runtimeId?: str
     keys: () => call('providers.keys'),
     async saveAndCheck(provider: string, apiKey: string, saved: () => void = () => {}) {
       await call('providers.configure', { provider, apiKey: apiKey.trim() })
+      invalidateModels(computer, profile)
       saved()
       return call('providers.check', { provider })
     },

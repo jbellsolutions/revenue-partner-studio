@@ -15,7 +15,7 @@ MAX_EXPANDED = 16 * 1024**3
 CHUNK = 1024 * 1024
 
 
-def build_archive(source, computer, output, profiles=None):
+def build_archive(source, computer, output, profiles=None, selection=None):
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists(): raise ValueError('Export already exists')
@@ -30,7 +30,11 @@ def build_archive(source, computer, output, profiles=None):
                 else: archive.writestr(key, data)
                 return {'sha256': checksum, 'size': size, 'mode': mode}
             try:
-                bundle = build_bundle(source, computer, profiles, _sink=add)
+                if selection:
+                    from .cloud_skills import build
+                    bundle = build(source, computer, selection, add)
+                else:
+                    bundle = build_bundle(source, computer, profiles, _sink=add)
             except BaseException:
                 # Never leave a partial export that appears ready to import or
                 # prevents retrying a read-only snapshot after a transient error.

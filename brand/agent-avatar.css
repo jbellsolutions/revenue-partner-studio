@@ -1,0 +1,87 @@
+.bot-avatar {
+  --bot-hue: 165;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 12px;
+  background: hsl(var(--bot-hue) 22% 19%);
+  border: 1px solid hsl(var(--bot-hue) 20% 30%);
+  color: hsl(var(--bot-hue) 65% 78%);
+}
+.bot-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 23px;
+  height: 17px;
+  border-radius: 6px;
+  border: 1.5px solid currentColor;
+  background: #131619;
+}
+.bot-face i {
+  width: 3px;
+  height: 5px;
+  border-radius: 3px;
+  background: currentColor;
+}
+.bot-antenna {
+  position: absolute;
+  top: 4px;
+  width: 2px;
+  height: 5px;
+  background: currentColor;
+  border-radius: 2px;
+}
+.bot-role {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 5px;
+  background: #23272d;
+  border: 1px solid #505662;
+  font-size: 10px;
+  line-height: 1;
+  color: #e9eaec;
+}
+.bot-avatar.compact {
+  width: 27px;
+  height: 27px;
+  flex-basis: 27px;
+  border-radius: 9px;
+}
+.bot-avatar.compact .bot-face {
+  width: 18px;
+  height: 14px;
+  gap: 4px;
+}
+.bot-avatar.compact .bot-antenna {
+  top: 2px;
+  height: 3px;
+}
+.bot-avatar.compact .bot-role {
+  font-size: 8px;
+  width: 12px;
+  height: 12px;
+}
+.bot-avatar.is-working .bot-face i {
+  animation: bot-focus 1.5s ease-in-out infinite alternate;
+}
+@keyframes bot-focus {
+  to {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-avatar.is-working .bot-face i {
+    animation: none;
+  }
+}

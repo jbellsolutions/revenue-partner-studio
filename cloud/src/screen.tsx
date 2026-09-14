@@ -1,8 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { rpc } from './api'
-export function Screen({ computer, agent, enabled }: { computer: string; agent: string; enabled: boolean }) {
+export const Screen = memo(function Screen({
+  computer,
+  agent,
+  enabled,
+  agentName,
+  computerName
+}: {
+  computer: string
+  agent: string
+  enabled: boolean
+  agentName: string
+  computerName: string
+}) {
   const surface = useRef<HTMLDivElement>(null),
-    rfb = useRef<any>(null)
+    rfb = useRef<any>(null),
+    frame = useRef<HTMLElement>(null)
+  const [controlling, setControlling] = useState(false)
   const [error, setError] = useState(''),
     [status, setStatus] = useState('Connecting'),
     [paused, setPaused] = useState(false),
@@ -23,7 +37,10 @@ export function Screen({ computer, agent, enabled }: { computer: string; agent: 
         ])
         if (disposed || !surface.current) return
         if (info.queued) {
-          setStatus('Waiting'); setError(`All four specialist screens are in use. Your place in the queue: ${info.position}. Chat stays available.`)
+          setStatus('Waiting')
+          setError(
+            `All four specialist screens are in use. Your place in the queue: ${info.position}. Chat stays available.`
+          )
           reconnect = setTimeout(() => setAttempt(v => v + 1), 2000)
           return
         }
@@ -31,6 +48,7 @@ export function Screen({ computer, agent, enabled }: { computer: string; agent: 
         url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
         const client = new module.default(surface.current, url.href, { credentials: { password: info.password || '' } })
         rfb.current = client
+        client.showDotCursor = true
         client.scaleViewport = true
         client.resizeSession = false
         client.viewOnly = !info.paused
@@ -64,8 +82,15 @@ export function Screen({ computer, agent, enabled }: { computer: string; agent: 
       rfb.current = null
     }
   }, [computer, agent, enabled, attempt, stopped])
-  useEffect(() => () => { void rpc(computer, 'screen.cancel_wait', { agentId: agent }).catch(() => {}) }, [computer, agent])
+  useEffect(
+    () => () => {
+      void rpc(computer, 'screen.cancel_wait', { agentId: agent }).catch(() => {})
+    },
+    [computer, agent]
+  )
   async function control() {
+    if (controlling) return
+    setControlling(true)
     try {
       const next = !paused
       const current = rfb.current
@@ -75,19 +100,21 @@ export function Screen({ computer, agent, enabled }: { computer: string; agent: 
       if (rfb.current) rfb.current.viewOnly = !next
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      setControlling(false)
     }
   }
   return (
-    <section className="studio-screen-section">
+    <section ref={frame} className="studio-screen-section">
       <div className="studio-screen-heading">
-        Computer{' '}
+        <strong>{computerName}</strong>{' '}
         <span>
           <i className={status === 'Live' ? 'dot live' : 'dot'} />
           {status}
         </span>
       </div>
       <div className="studio-screen-frame">
-        <div ref={surface} className="screen-canvas" />
+        <div ref={surface} className={'screen-canvas' + (paused ? ' interactive' : ' watching')} />
         {status !== 'Live' && (
           <div className="screen-placeholder">
             <span className="screen-glyph">▱</span>
@@ -95,29 +122,67 @@ export function Screen({ computer, agent, enabled }: { computer: string; agent: 
               {status === 'Connecting'
                 ? 'Connecting to your screen'
                 : enabled
-                  ? status === 'Waiting' ? 'Waiting for a screen' : 'Screen disconnected'
+                  ? status === 'Waiting'
+                    ? 'Waiting for a screen'
+                    : 'Screen disconnected'
                   : 'Screen setup needed'}
             </strong>
             <p>
               {error ||
                 (enabled ? 'Your conversation stays connected.' : 'This computer needs its managed screen connector.')}
             </p>
-            {enabled && <button onClick={() => {setStopped(false);setAttempt(v => v + 1)}}>Reconnect screen</button>}
-            {status === 'Waiting' && !stopped && <button onClick={() => {setStopped(true);setStatus('Unavailable');void rpc(computer,'screen.cancel_wait',{agentId:agent}).catch(e=>setError(e.message))}}>Cancel waiting</button>}
+            {enabled && (
+              <button
+                onClick={() => {
+                  setStopped(false)
+                  setAttempt(v => v + 1)
+                }}
+              >
+                Reconnect screen
+              </button>
+            )}
+            {status === 'Waiting' && !stopped && (
+              <button
+                onClick={() => {
+                  setStopped(true)
+                  setStatus('Unavailable')
+                  void rpc(computer, 'screen.cancel_wait', { agentId: agent }).catch(e => setError(e.message))
+                }}
+              >
+                Cancel waiting
+              </button>
+            )}
           </div>
         )}
       </div>
+      {error && status === 'Live' && (
+        <p className="connection-error" role="alert">
+          {error}
+        </p>
+      )}
       <p className="studio-screen-caption">
-        {agent} · {paused ? 'You have control' : 'Agent workspace'}
+        {agentName} ·{' '}
+        {status !== 'Live'
+          ? 'Screen reconnecting'
+          : paused
+            ? 'You have control · automation paused'
+            : 'Watching agent workspace'}
       </p>
       <div className="studio-screen-controls">
-        <button disabled={status !== 'Live'} onClick={() => void control()}>
-          {paused ? 'Resume agent' : 'Take control'}
+        <button disabled={status !== 'Live' || controlling} onClick={() => void control()}>
+          {controlling ? 'Updating control…' : paused ? 'Resume agent' : 'Take control'}
         </button>
-        <button disabled={status !== 'Live'} onClick={() => void surface.current?.requestFullscreen()}>
+        <button
+          disabled={status !== 'Live'}
+          onClick={() =>
+            void (document.fullscreenElement ? document.exitFullscreen() : frame.current?.requestFullscreen())?.catch(
+              e => setError(e.message)
+            )
+          }
+        >
           Expand ↗
         </button>
       </div>
     </section>
   )
-}
+})

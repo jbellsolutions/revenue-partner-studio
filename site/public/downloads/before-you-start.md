@@ -6,7 +6,7 @@ By Your AI Guy · Preparation guide · Updated September 14, 2026
 
 Revenue Partner Studio gives your Hermes agents a browser workspace and their own Orgo computers. You can chat, switch computers, explore skills and files, and take over an agent's screen. This guide helps you prepare your accounts before Claude Code or Codex installs your private copy.
 
-**Try it first:** [Open the free guided demo](https://betterthangrokbot.com/demo). It uses sample data and simulated responses. It needs no account and consumes no model credits.
+**Try it first:** [Open the free guided demo](https://revenuepartnerstudio.com/demo). It uses sample data and simulated responses. It needs no account and consumes no model credits.
 
 ## 1. Choose your installation assistant
 
@@ -51,10 +51,10 @@ Local chat and approved folders are supported. Mac desktop control is hidden in 
 
 ## 6. Start the installation
 
-Open [the repository](https://github.com/jbellsolutions/revenue-partner-studio) and copy its setup prompt into Claude Code or Codex. The same prompt is available on [Build your own](https://betterthangrokbot.com/build).
+Open [the repository](https://github.com/jbellsolutions/revenue-partner-studio) and copy its setup prompt into Claude Code or Codex. The same prompt is available on [Build your own](https://revenuepartnerstudio.com/build).
 
 Ask the assistant to install Revenue Partner Studio from the repository, read AGENTS.md and INSTALL.md, prepare an independent folder, check your accounts and costs, deploy your private Railway workspace, connect your selected Orgo computer, and verify a real conversation, tool task and screen. It should preserve existing data and report any remaining checks honestly.
 
 You handle account sign-in and consent. Your assistant does the technical setup. It should finish by giving you your private app link, a securely stored owner password, verification results and recovery instructions. Keep the password and the gateway encryption-key backup private.
 
-**Release status:** v0.2.0-beta.1. Each installation is one private workspace. The public demo is simulated, and this release is not shared multitenant SaaS. See the repository's release checks for current installation and reliability evidence.
+**Release status:** v0.2.0-beta.2. Each installation is one private workspace. The public demo is simulated, and this release is not shared multitenant SaaS. See the repository's release checks for current installation and reliability evidence.
