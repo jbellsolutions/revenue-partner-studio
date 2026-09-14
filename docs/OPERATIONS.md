@@ -24,7 +24,7 @@ The updater checks the authenticated runtime’s capabilities before reopening c
 
 Check `status` for separate connector/runtime readiness and extension versions. `screen.status` is read-only: it neither allocates a screen nor renews a lease. An unverified live process is preserved for ownership reconciliation. The Advanced screen count starts with the existing four-specialist baseline. Higher counts require a host-specific qualification record and measured resource headroom; a setting alone does not prove capacity. Lowering a limit preserves occupied assignments.
 
-A repair download is marked connected only when its specific installation job reports a ready runtime. An already-connected older companion cannot complete that repair flow. Low local disk space still blocks imports and durable writes; diagnostic-file failures alone do not close a working transport.
+An existing Mac repair download uses this same guarded updater and runs compatibility checks in a temporary home, so it never contends with the live Studio queue. It retains a healthy pairing and can renew a failed pairing only for the saved workspace using the owner-scoped repair credential. A repair download is marked connected only when its specific installation job reports a ready runtime. An already-connected older companion cannot complete that repair flow. Low local disk space still blocks imports and durable writes; diagnostic-file failures alone do not close a working transport.
 
 ## Restore and prove it
 

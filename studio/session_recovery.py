@@ -26,9 +26,32 @@ def bind_session(service, params):
     identity = params.get('conversationId')
     if not isinstance(identity, str) or not 1 <= len(identity) <= 200:
         raise ValueError('Invalid conversation identity')
+    # Looking up a session does not cancel Hermes's disconnected-client timer.
+    # Use the native attach operation to restore event delivery and ownership.
+    service.rpc('session.activate', {'session_id': params['runtimeId'], 'omit_messages': True})
     previous = session.get('studio_conversation_id')
     if previous and previous != identity:
         # Resuming the same stored history in another browser remains valid.
         return {'bound': False}
     session['studio_conversation_id'] = identity
     return {'bound': True}
+
+
+def recover_sessions(service, params):
+    rows = params.get('sessions', [])
+    if not isinstance(rows, list) or len(rows) > 100:
+        raise ValueError('Invalid session recovery list')
+    recovered = []
+    for row in rows:
+        try: home = profile(service.home, row['agent'])
+        except ValueError: continue
+        session = service.server._sessions.get(row['runtime'])
+        if not session or Path(session.get('profile_home') or service.home) != home:
+            continue
+        try:
+            service.rpc('session.activate', {'session_id': row['runtime'], 'omit_messages': True})
+            recovered.append(row['runtime'])
+        except RuntimeError:
+            # A session already being reclaimed must finish; do not resurrect it.
+            continue
+    return {'recovered': recovered}

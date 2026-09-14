@@ -16,6 +16,8 @@ import sys
 import tarfile
 import time
 import urllib.request
+import runpy
+import tempfile
 from contextlib import closing
 
 def write(path,data):
@@ -41,6 +43,64 @@ def native_install(home):
             python=source/name/'bin/python'
             if python.is_file() and (source/'tui_gateway/server.py').is_file():return source,python
     raise RuntimeError('A compatible local Hermes installation was not found. Install Hermes first, then reopen this connection download.')
+
+def download_runtime(state, support):
+    runtime=support/('runtime-'+state['sha256'][:16])
+    if not (runtime/'.complete').exists():
+        archive=support/'runtime.tar.gz'
+        with urllib.request.urlopen(state['artifactUrl'],timeout=120) as response,archive.open('wb') as out:shutil.copyfileobj(response,out)
+        with archive.open('rb') as data:actual=hashlib.file_digest(data,'sha256').hexdigest()
+        if actual!=state['sha256']:raise RuntimeError('The Studio extension checksum did not match.')
+        extract(archive,runtime);write(runtime/'.complete',b'verified');archive.unlink()
+    return runtime
+
+def check_compatibility(python, source, runtime, computer):
+    # Never start a second queue owner against the live Hermes home just to
+    # check compatibility. This was preventing repair of a connected Mac.
+    with tempfile.TemporaryDirectory(prefix='studio-compatibility-') as temporary:
+        Path(temporary,'config.yaml').write_text('{}\n')
+        environment={**os.environ,'PYTHONPATH':str(runtime),'HERMES_HOME':temporary,'STUDIO_COMPUTER_ID':computer,'STUDIO_COMPUTER_KIND':'local'}
+        probe=subprocess.run([str(python),'-m','studio.local_runtime','--native',str(source),'--check'],env=environment,cwd=str(runtime),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        if probe.returncode:raise RuntimeError('Your Hermes version is not compatible with this Studio extension. Existing Hermes remains available.')
+
+def repair_existing(connector_file, runtime, state, save):
+    previous=connector_file.read_bytes();cfg=json.loads(previous)
+    if cfg.get('kind')!='local' or cfg.get('computerId')!=state['computerId'] or cfg.get('cloudUrl','').rstrip('/')!=state['origin'].rstrip('/'):
+        raise RuntimeError('This repair does not match the saved Studio connection.')
+    updater=runpy.run_path(str(runtime/'distribution/update-extension.py'))
+    if not updater['update'](connector_file.resolve(),runtime)['ready']:
+        raise RuntimeError('This Mac has accepted work. Let it finish before reopening the repair download.')
+    # Keep the existing pairing, source path, native Hermes, menu and credentials.
+    # Preparing a repair code does not revoke an existing pairing.
+    started=time.time()
+    result=updater['update'](connector_file.resolve(),runtime,True,setup_job=state['job'])
+    cfg['setupJob']=state['job']
+    if not wait_connected(cfg,started):
+        # A revoked/expired Studio pairing can be renewed with the owner-scoped
+        # credential already supplied in this repair download. Provider auth is
+        # never copied or changed.
+        if not state.get('token'):
+            origin=state['origin'].rstrip('/')
+            request=urllib.request.Request(origin+'/api/pairing/exchange',data=json.dumps({'computerId':state['computerId'],'code':state['pair'],'platform':'darwin'}).encode(),headers={'Content-Type':'application/json','Origin':origin})
+            try:
+                with urllib.request.urlopen(request,timeout=30) as response:state['token']=json.load(response)['token']
+            except Exception:raise RuntimeError('The Studio extension is repaired, but its pairing could not be renewed. Prepare a fresh repair download; native Hermes remains available.') from None
+            save()
+        write(Path(cfg['connectorTokenFile']),state['token'].encode())
+        if not wait_connected(cfg,started):
+            raise RuntimeError('The Studio extension is repaired, but its cloud connection is still unavailable. Private connection diagnostics were retained.')
+    state['installed']=True;state['backup']=result['backup'];save()
+    return cfg
+
+def wait_connected(cfg, since):
+    path=Path(cfg['stateDir'])/'cloud-connection.json'
+    for attempt in range(12):
+        try:
+            value=json.loads(path.read_text())
+            if value.get('time',0)>=since and value.get('connected'):return True
+        except (OSError,ValueError):pass
+        time.sleep(.5)
+    return False
 
 def extract(archive,target):
     target.mkdir(mode=0o700,parents=True,exist_ok=True)
@@ -104,6 +164,13 @@ def install(configuration):
     progress=support/('setup-'+incoming['job']+'.json')
     state=json.loads(progress.read_text()) if progress.exists() else incoming
     def save():write(progress,json.dumps(state).encode())
+    connector_file=base/'local-connector.json'
+    if connector_file.exists():
+        runtime=download_runtime(state,support)
+        check_compatibility(python,source,runtime,state['computerId'])
+        result=repair_existing(connector_file,runtime,state,save)
+        print('Existing Studio connection repaired. Native Hermes, profiles and credentials were preserved.',flush=True)
+        return result
     if not state.get('token'):
         print('Pairing this Mac with your private Studio…',flush=True)
         body=json.dumps({'computerId':state['computerId'],'code':state['pair'],'platform':'darwin'}).encode()
@@ -112,14 +179,8 @@ def install(configuration):
             with urllib.request.urlopen(request,timeout=30) as response:state['token']=json.load(response)['token']
         except Exception:raise RuntimeError('The connection download expired or Studio could not be reached. Prepare a new download for this saved Mac in Studio.')
         save()
-    runtime=support/('runtime-'+state['sha256'][:16])
-    if not (runtime/'.complete').exists():
-        print('Downloading the verified Studio extension…',flush=True)
-        archive=support/'runtime.tar.gz'
-        with urllib.request.urlopen(state['artifactUrl'],timeout=120) as response,archive.open('wb') as out:shutil.copyfileobj(response,out)
-        with archive.open('rb') as data:actual=hashlib.file_digest(data,'sha256').hexdigest()
-        if actual!=state['sha256']:raise RuntimeError('The Studio extension checksum did not match.')
-        extract(archive,runtime);write(runtime/'.complete',b'verified');archive.unlink()
+    runtime=download_runtime(state,support)
+    check_compatibility(python,source,runtime,state['computerId'])
     app=support/'Revenue Partner Studio Companion.app';executable=app/'Contents/MacOS/StudioCompanion'
     if not executable.exists():
         print('Preparing the companion menu and desktop permission controls…',flush=True)
@@ -154,9 +215,6 @@ def install(configuration):
     cfg={'setupJob':state['job'],'kind':'local','computerId':state['computerId'],'hermesHome':str(home),'nativeSource':str(source),'sourceDir':str(runtime),'port':port,'stateDir':str(base/'local-connector'),'hermesUrl':'http://127.0.0.1:'+str(port),'hermesOrigin':'http://127.0.0.1:'+str(port),'hermesTokenFile':str(runtime_token),'cloudUrl':origin,'connectorTokenFile':str(token_file),'desktopHelper':str(executable)}
     write(connector_file,json.dumps(cfg).encode());write(support/'config.json',json.dumps(cfg).encode())
     launch=runtime/'distribution/local-launch.py'
-    environment={**os.environ,'PYTHONPATH':str(runtime),'HERMES_HOME':str(home),'STUDIO_COMPUTER_ID':state['computerId'],'STUDIO_COMPUTER_KIND':'local'}
-    probe=subprocess.run([str(python),'-m','studio.local_runtime','--native',str(source),'--check'],env=environment,cwd=str(runtime),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-    if probe.returncode:raise RuntimeError('Your Hermes version is not compatible with this Studio extension. Existing Hermes remains available.')
     domain='gui/'+str(os.getuid());agents=Path.home()/'Library/LaunchAgents';agents.mkdir(exist_ok=True)
     for suffix,arguments in [('runtime',[str(python),str(launch),str(connector_file),'runtime']),('connector',[str(python),str(launch),str(connector_file),'connector']),('menu',[str(executable)])]:
         label='com.jbellsolutions.grokish-studio.'+suffix;plist=agents/(label+'.plist')

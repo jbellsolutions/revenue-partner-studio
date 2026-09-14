@@ -16,7 +16,7 @@ def protect_dispatch(server):
         raise RuntimeError('This Hermes version lacks compatible background RPC dispatch.')
     server._LONG_HANDLERS = frozenset(server._LONG_HANDLERS) | {
         'studio.operation', 'studio.snapshot', 'studio.a2a', 'studio.events',
-        'session.create', 'session.resume', 'session.list',
+        'session.create', 'session.resume', 'session.list', 'session.activate', 'studio.sessions.recover', 'studio.session.bind',
     }
 
 def prepare(native):
@@ -24,7 +24,7 @@ def prepare(native):
     if not (native/'tui_gateway/server.py').is_file():raise RuntimeError('The installed Hermes runtime could not be found.')
     sys.path.insert(0,str(native))
     import tui_gateway.server as server
-    required={'session.create','session.resume','session.list','prompt.submit','session.interrupt','profiles.create'}
+    required={'session.create','session.resume','session.list','session.activate','prompt.submit','session.interrupt','profiles.create'}
     missing=required-set(server._methods)
     if missing:raise RuntimeError('This Hermes version lacks required Studio operations: '+', '.join(sorted(missing)))
     protect_dispatch(server)

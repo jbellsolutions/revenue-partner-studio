@@ -508,8 +508,8 @@ def register(server):
         try: return server._ok(rid,dispatch(_service,params))
         except Exception as exc: return server._err(rid,4096,str(exc))
     server._methods['studio.a2a']=a2a
-    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'profileSettings':True,'sessionRecovery':True,'extensionVersion':'screens-recovery-1','limits':_service.settings()})
-    from .session_recovery import inspect_session, bind_session
+    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'profileSettings':True,'sessionRecovery':True,'transportRecovery':True,'extensionVersion':'screens-recovery-2','limits':_service.settings()})
+    from .session_recovery import inspect_session, bind_session, recover_sessions
     original_create = server._methods['session.create']
     def create_session(rid, params):
         result = original_create(rid, params)
@@ -526,6 +526,9 @@ def register(server):
         return invoke
     server._methods['studio.session'] = session_method(inspect_session)
     server._methods['studio.session.bind'] = session_method(bind_session)
+    server._methods['studio.sessions.recover'] = session_method(recover_sessions)
+    if hasattr(server, '_LONG_HANDLERS'):
+        server._LONG_HANDLERS = frozenset(server._LONG_HANDLERS) | {'studio.sessions.recover', 'studio.session.bind', 'session.activate'}
     server._methods['studio.snapshot']=lambda rid,params:server._ok(rid,_service.snapshot())
     def events(rid,params):
         if params.get('summary'):

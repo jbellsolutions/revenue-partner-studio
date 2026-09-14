@@ -89,3 +89,81 @@ def test_interactive_launch_update_requires_the_exact_studio_owner(tmp_path,monk
     path=base/'com.jbellsolutions.grokish-studio.runtime.plist'
     value=plistlib.loads(path.read_bytes());value['ProgramArguments'][1]='/some/other/runtime.py';path.write_bytes(plistlib.dumps(value))
     with pytest.raises(RuntimeError,match='does not belong'):m['launch_updates'](cfg,target)
+
+
+@pytest.fixture
+def repair(tmp_path,monkeypatch):
+    module=runpy.run_path(str(Path(__file__).parents[1]/'distribution/connect-local.py'))
+    cfg=tmp_path/'connector.json';token=tmp_path/'connector-token';token.write_text('old-pairing')
+    original={'kind':'local','computerId':'mac','cloudUrl':'https://workspace.test','sourceDir':str(tmp_path/'existing-runtime'),'connectorTokenFile':str(token),'stateDir':str(tmp_path/'state')}
+    cfg.write_text(json.dumps(original));state={'computerId':'mac','origin':'https://workspace.test','job':'repair-job','pair':'one-time-fixture'}
+    monkeypatch.setattr(module['urllib'].request,'urlopen',lambda *a,**k:pytest.fail('A healthy pairing must not be exchanged'))
+    module['repair_existing'].__globals__['wait_connected']=lambda *a:True
+    return module,cfg,original,state,token
+
+
+def test_repair_reuses_binding_and_credentials_instead_of_installing_a_second_copy(repair,monkeypatch):
+    m,cfg,original,state,token=repair;calls=[]
+    def update(configuration,source,apply=False,**kwargs):
+        calls.append(apply);return {'ready':True,'backup':'private-backup'}
+    monkeypatch.setattr(m['runpy'],'run_path',lambda _: {'update':update})
+    result=m['repair_existing'](cfg,cfg.parent/'release',state,lambda:None)
+    assert calls==[False,True] and result=={**original,'setupJob':'repair-job'}
+    assert token.read_text()=='old-pairing' and state['installed']
+
+
+def test_busy_repair_does_not_rewrite_binding_or_pairing(repair,monkeypatch):
+    m,cfg,original,state,token=repair;before=cfg.read_bytes()
+    monkeypatch.setattr(m['runpy'],'run_path',lambda _: {'update':lambda *a:{'ready':False}})
+    with pytest.raises(RuntimeError,match='accepted work'):m['repair_existing'](cfg,cfg.parent/'release',state,lambda:None)
+    assert cfg.read_bytes()==before and token.read_text()=='old-pairing'
+
+
+def test_failed_extension_repair_restores_original_connection_config(repair,monkeypatch):
+    m,cfg,original,state,token=repair;before=cfg.read_bytes()
+    def update(configuration,source,apply=False,**kwargs):
+        if apply:raise RuntimeError('native readiness failed')
+        return {'ready':True}
+    monkeypatch.setattr(m['runpy'],'run_path',lambda _: {'update':update})
+    with pytest.raises(RuntimeError,match='readiness'):m['repair_existing'](cfg,cfg.parent/'release',state,lambda:None)
+    assert cfg.read_bytes()==before and token.read_text()=='old-pairing'
+
+
+def test_repair_can_renew_only_its_existing_studio_pairing(repair,monkeypatch):
+    import io
+    m,cfg,original,state,token=repair;checks=iter([False,True]);sent=[]
+    m['repair_existing'].__globals__['wait_connected']=lambda *a:next(checks)
+    monkeypatch.setattr(m['runpy'],'run_path',lambda _: {'update':lambda *a,**kw:{'ready':True,'backup':'private-backup'}})
+    def exchange(request,**kwargs):
+        sent.append(request)
+        return io.BytesIO(json.dumps({'token':'fixture-pairing'}).encode())
+    monkeypatch.setattr(m['urllib'].request,'urlopen',exchange)
+    m['repair_existing'](cfg,cfg.parent/'release',state,lambda:None)
+    assert len(sent)==1 and sent[0].full_url=='https://workspace.test/api/pairing/exchange'
+    assert json.loads(sent[0].data)['computerId']=='mac'
+    assert token.read_text()=='fixture-pairing'
+
+
+def test_compatibility_probe_never_uses_the_live_hermes_home(tmp_path,monkeypatch):
+    m=runpy.run_path(str(Path(__file__).parents[1]/'distribution/connect-local.py'));seen=[]
+    def run(args,**kwargs):
+        home=Path(kwargs['env']['HERMES_HOME']);seen.append(home)
+        assert home!=tmp_path/'live' and (home/'config.yaml').read_text()=='{}\n'
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(m['subprocess'],'run',run)
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path/'live'))
+    m['check_compatibility'](Path('python'),tmp_path/'native',tmp_path/'release','mac')
+    assert seen and not seen[0].exists()
+
+
+def test_update_sets_repair_job_only_with_verified_extension_and_rolls_it_back(installation,monkeypatch):
+    m,source,target,home,cfg,task=installation;old=cfg.read_bytes()
+    monkeypatch.setattr(m['subprocess'],'run',lambda *a,**kw:SimpleNamespace(returncode=0))
+    def failed(cfg):raise RuntimeError('not ready')
+    m['update'].__globals__['verify_runtime']=failed
+    with pytest.raises(RuntimeError,match='not ready'):m['update'](cfg,source,True,setup_job='new-job')
+    assert cfg.read_bytes()==old
+    m['update'].__globals__['verify_runtime']=lambda cfg:None
+    result=m['update'](cfg,source,True,setup_job='new-job')
+    assert json.loads(cfg.read_text())=={**json.loads(old),'setupJob':'new-job'}
+    assert (Path(result['backup'])/'connector-config.json').read_bytes()==old

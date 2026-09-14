@@ -50,7 +50,7 @@ def verify_runtime(cfg):
                     message = json.loads(ws.recv(timeout=max(.01, response_deadline-time.monotonic())))
                     if message.get('id') != request: continue
                     result = message.get('result', {})
-                    if result.get('sessionRecovery') and result.get('profileSettings'): return
+                    if result.get('sessionRecovery') and result.get('profileSettings') and result.get('extensionVersion') == 'screens-recovery-2': return
                     raise RuntimeError('The installed extension did not report the required capabilities')
         except Exception as exc:
             last_error = type(exc).__name__
@@ -80,8 +80,11 @@ def pending(path):
         return db.execute("SELECT count(*) FROM deliveries WHERE state IN ('queued','starting','running')").fetchone()[0]
 
 
-def update(configuration, source, apply=False):
-    cfg = json.loads(configuration.read_text())
+def update(configuration, source, apply=False, setup_job=None):
+    original_config = configuration.read_bytes()
+    cfg = json.loads(original_config)
+    if setup_job is not None and (not isinstance(setup_job,str) or not 1 <= len(setup_job) <= 200):
+        raise ValueError('Invalid repair job identity')
     home, target = Path(cfg['hermesHome']).resolve(), Path(cfg['sourceDir']).resolve()
     kind = cfg.get('kind', 'orgo')
     binding = home / ('studio-cloud/local-computer.json' if kind == 'local' else 'orgo-computer/computer.json')
@@ -92,7 +95,7 @@ def update(configuration, source, apply=False):
     task_store = home/('studio/workspace.sqlite3' if kind == 'local' else 'studio-cloud/runtime/workspace.sqlite3')
     queued = pending(task_store)
     result = {'computerId': cfg['computerId'], 'files': len(files), 'pendingTasks': queued,
-              'ready': queued == 0, 'revision': 'screens-recovery-1'}
+              'ready': queued == 0, 'revision': 'screens-recovery-2'}
     if not apply: return result
     if queued: raise RuntimeError('Studio has accepted work. Wait for it to finish before updating')
     os.umask(0o077)
@@ -102,6 +105,7 @@ def update(configuration, source, apply=False):
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     backup = base/'extension-backups'/(time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8])
     backup.mkdir(parents=True, mode=0o700)
+    (backup/'connector-config.json').write_bytes(original_config)
     old = {name: (target/name).read_bytes() if (target/name).exists() else None for name in files}
     for name, data in old.items():
         if data is not None:
@@ -138,6 +142,9 @@ def update(configuration, source, apply=False):
             temp = dest.with_suffix('.studio-update');temp.write_bytes(data);temp.replace(dest)
         for path, (_, data) in launch_files.items():
             temp = path.with_suffix('.studio-update');temp.write_bytes(data);temp.replace(path)
+        if setup_job is not None:
+            temp=configuration.with_suffix('.studio-update')
+            temp.write_text(json.dumps({**cfg,'setupJob':setup_job}));temp.replace(configuration)
         record = {'revision': result['revision'], 'computerId': cfg['computerId'],
                   'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
         (backup/'manifest.json').write_text(json.dumps(record))
@@ -155,6 +162,7 @@ def update(configuration, source, apply=False):
                 if data is None: dest.unlink(missing_ok=True)
                 else: dest.write_bytes(data)
             for path, (original, _) in launch_files.items(): path.write_bytes(original)
+            configuration.write_bytes(original_config)
         raise
     finally:
         for name in ['runtime','connector']:

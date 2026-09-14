@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import pytest
 from studio.local_runtime import protect_dispatch
-from studio.session_recovery import inspect_session, bind_session
+from studio.session_recovery import inspect_session, bind_session, recover_sessions
 from studio.cloud_settings import operation, apply_pending
 from tests.test_cloud_coordination import make_service
 
@@ -23,12 +23,26 @@ def test_resume_reuses_only_the_owning_profile_and_retains_history(tmp_path):
     a={'profile_home':tmp_path,'session_key':'same','history':['existing'],'running':True}
     b={'profile_home':child,'session_key':'same','history':['other']}
     service.server._sessions={'a':a,'b':b}
+    service.rpc=Mock(return_value={})
     assert inspect_session(service,{'agentId':'assistant','sessionId':'same'})['runtimeId']=='b'
     bind_session(service,{'agentId':'assistant','runtimeId':'b','conversationId':'draft'})
+    service.rpc.assert_called_once_with('session.activate', {'session_id':'b','omit_messages':True})
     assert inspect_session(service,{'agentId':'assistant','conversationId':'draft'})['runtimeId']=='b'
     assert inspect_session(service,{'agentId':'default','conversationId':'draft'})['runtimeId'] is None
     with pytest.raises(ValueError):bind_session(service,{'agentId':'default','runtimeId':'b','conversationId':'draft'})
     assert a['history']==['existing'] and b['history']==['other']
+
+
+def test_transport_recovery_reattaches_only_live_matching_profiles_without_submitting_work(tmp_path):
+    service=make_service(tmp_path)
+    child=tmp_path/'profiles'/'assistant';child.mkdir(parents=True);(child/'config.yaml').write_text('model: test')
+    service.server._sessions={'live':{'profile_home':child,'history':['keep'],'running':True}}
+    service.rpc=Mock(return_value={})
+    result=recover_sessions(service,{'sessions':[{'runtime':'live','agent':'default'},
+        {'runtime':'missing','agent':'assistant'},{'runtime':'live','agent':'deleted'}, {'runtime':'live','agent':'assistant'}]})
+    assert result=={'recovered':['live']}
+    service.rpc.assert_called_once_with('session.activate',{'session_id':'live','omit_messages':True})
+    assert service.server._sessions['live']['running'] and service.server._sessions['live']['history']==['keep']
 
 
 def test_profile_settings_native_save_is_scoped_preserves_secrets_and_rejects_stale_busy(tmp_path, monkeypatch):

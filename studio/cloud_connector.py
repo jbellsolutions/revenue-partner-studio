@@ -156,6 +156,17 @@ class Connector:
             # Durable task writes still fail closed if storage is exhausted.
             pass
 
+    async def recover_sessions(self):
+        try:
+            capabilities = await self.rpc('studio.capabilities', {})
+            if not capabilities.get('transportRecovery'): return
+            rows = [dict(r) for r in self.ledger.db.execute('SELECT runtime,agent FROM sessions ORDER BY rowid DESC LIMIT 100')]
+            result = await self.rpc('studio.sessions.recover', {'sessions': rows})
+            await self.emit('runtime.sessions_recovered', {'count': len(result['recovered'])})
+        except (RuntimeError, TimeoutError, ConnectionError):
+            # Only attachments are retried on the next connection, never tasks.
+            await self.emit('runtime.recovery_pending', {'message': 'Conversation attachments need reconciliation'})
+
     async def hermes_loop(self):
         while True:
             try:
@@ -171,6 +182,7 @@ class Connector:
                     self.capabilities['chat'] = True
                     self.connection_diagnostic('hermes')
                     await self.emit('runtime.connected', {'connected': True, 'epoch': self.runtime_epoch})
+                    self.spawn(self.recover_sessions())
                     async for raw in ws:
                         message = json.loads(raw)
                         if 'id' in message and message['id'] in self.pending:
@@ -338,7 +350,7 @@ class Connector:
                     'epoch': self.runtime_epoch, 'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
                     'state': 'ready' if connected else 'hermes_unavailable', 'message': error,
                     'runtimeVersion': capabilities.get('extensionVersion', 'legacy'),
-                    'connectorVersion': 'screens-recovery-1', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
+                    'connectorVersion': 'screens-recovery-2', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
         if method=='import.preview':
             from .cloud_library import Library
             if p.get('bundle'):return await asyncio.to_thread(Library(self.home).preview,self.computer,p['bundle'])
