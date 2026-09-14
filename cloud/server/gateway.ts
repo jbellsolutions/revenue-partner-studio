@@ -9,6 +9,7 @@ import { ControlStore } from './control-store.ts'
 import { Computers } from './computers.ts'
 import { Transfers } from './transfers.ts'
 import {localSetup,localDownload} from './local-setup.ts'
+import { publicWebsite, type PublicWebsiteOptions } from './public-website.ts'
 
 type Options = {
   qualificationStatus?: () => unknown
@@ -17,6 +18,7 @@ type Options = {
   origin: string
   allowedOrigins?: string[]
   publicDir?: string
+  website?: PublicWebsiteOptions
   control?: ControlStore
   setupDir?: string
 }
@@ -84,6 +86,9 @@ const METHODS = new Set([
 ])
 export function createGateway(options: Options) {
   const { store, origin } = options
+  const website = publicWebsite(options.website)
+  if (website?.matches({ headers: { host: new URL(origin).host } } as IncomingMessage))
+    throw new Error('Public website and private Studio must use different hosts.')
   const control=options.control||new ControlStore(store,randomBytes(32))
   if (options.password.length < 16) throw new Error('Studio owner password must contain at least 16 characters.')
   const salt = randomBytes(16),
@@ -166,6 +171,7 @@ export function createGateway(options: Options) {
     return JSON.parse(Buffer.concat(chunks).toString() || '{}')
   }
   const server = createServer(async (req, res) => {
+    if (website?.matches(req)) return website.serve(req, res)
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'no-referrer')
     res.setHeader(
@@ -309,6 +315,10 @@ export function createGateway(options: Options) {
     }
   })
   server.on('upgrade', (req, socket, head) => {
+    if (website?.matches(req)) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+      return
+    }
     const url = new URL(req.url || '/', origin),
       computer = url.searchParams.get('computerId') || ''
     const bearer = (req.headers.authorization || '').replace(/^Bearer /, '')

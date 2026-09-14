@@ -16,6 +16,16 @@ Review the new release notes and checks. Fetch the public release into a clean i
 
 Do not blindly merge Hermes upstream. Pin the reviewed runtime and preserve provider isolation and custom coordination. Internal IDs and paths intentionally keep historical names; changing them can create a second installation. Older applications remain rollback clients until acceptance passes.
 
+## Optional public website on the existing service
+
+The cloud container includes the fixture-only public website. To serve it from the same Railway service, set `STUDIO_WEBSITE_URL` to its canonical HTTPS origin and attach that domain plus its `www` alias to the existing service on port 8788. Keep the private app on a separate hostname. The gateway refuses a public website origin that matches its private app hostname. `STUDIO_WEBSITE_DIR` is an optional directory override; the packaged files are selected by default.
+
+Keep DNS with the current provider when it supports an apex ALIAS, ANAME or flattened CNAME. Use the exact targets Railway reports for each domain, preserve existing records, and export a backup before editing. Do not guess an IP address from the target. Deploy and test the host routing before changing the public domain's DNS. Validate each hostname's DNS and HTTPS certificate independently. An attached domain or propagated record alone does not establish working HTTPS.
+
+Only the public host serves `/`, `/demo`, `/build`, `/prep`, public assets and preparation downloads. Its `www` alias redirects those paths to the canonical origin. Public hosts reject private APIs, setup endpoints and WebSockets, even when a client supplies an owner cookie. Their content security policy forbids agent-service connections. The private app retains its login and computer connections on its own host; add only that app origin to `STUDIO_ALLOWED_ORIGINS`. Existing connector URLs can remain in service during a domain transition.
+
+This option requires no second Railway service. Cloudflare Pages remains an independent supported destination for the same public site. Unset `STUDIO_WEBSITE_URL` to disable the optional host routing; restore the previous DNS targets when rolling back public hosting. Keep public DNS changes separate from runtime upgrades and note deployment transitions in reliability records.
+
 ## Repair an existing Studio extension
 
 Use `distribution/update-extension.py --config <existing-private-connector-config> --source <reviewed-release-directory> --check` with that installation’s Hermes Python. Then use the same arguments with `--apply` after the check reports no accepted work. This updater verifies the saved computer identity and exact supervised service ownership, stops only the Studio connector, rechecks work before stopping its runtime, and backs up source and consistent Studio databases. Legacy Orgo paths are resolved from the matching running Studio processes; the owned screen wrapper and connector configuration are backed up before migration. It does not replace native Hermes, homes, profiles or provider credentials.

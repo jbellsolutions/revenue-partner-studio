@@ -49,3 +49,11 @@ cloud/*.log
 
 !brand/
 !brand/**
+!site/
+!site/**
+site/node_modules
+site/dist
+!docs/
+!docs/BEFORE-YOU-START.md
+!docs/SETUP-PROMPT.txt
+!docs/Revenue Partner Studio - Before You Start.docx

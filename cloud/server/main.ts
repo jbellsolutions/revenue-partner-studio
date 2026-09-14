@@ -18,6 +18,10 @@ const gateway = createGateway({
   password: process.env.STUDIO_OWNER_PASSWORD || '',
   allowedOrigins: (process.env.STUDIO_ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean),
   origin: process.env.STUDIO_PUBLIC_URL || 'http://127.0.0.1:8788',
+  website: process.env.STUDIO_WEBSITE_URL ? {
+    url: process.env.STUDIO_WEBSITE_URL,
+    directory: process.env.STUDIO_WEBSITE_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), 'website')
+  } : undefined,
   publicDir: process.env.STUDIO_PUBLIC_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')
 })
 if (process.env.STUDIO_TRIAL_TARGETS) {

@@ -99,3 +99,11 @@ Follow-up backend acceptance: an owner takeover paused the test assistant's actu
 A temporary directional Mac-to-canary grant passed a real file-only A2A handoff. Acknowledgment took 316 ms, the receiver verified the imported file, a repeated request reused the same receipt, the reverse direction remained forbidden, and revocation removed the tested permission. Only the temporary test grant was revoked. This does not establish cancellation of every in-flight tool effect.
 
 The updated cloud qualification monitor records optional read-only screen ownership states and classified connection failures without persisting raw provider errors. It does not allocate or operate screens. Forty-four cloud tests, TypeScript checks and the production build passed. The next named 24-hour window retains previous trial records and must be reviewed separately from browser acceptance; elapsed time or a healthy status alone cannot mark the full release accepted.
+
+### Public domain hosting — September 14, 2026
+
+The gateway can optionally serve the fixture-only public website on separate public hostnames. It rejects private API, setup and WebSocket access on those hosts, including requests with valid private credentials. The private app and existing connector addresses retain their routes. This changes website delivery only; computer-side Hermes extensions and provider settings are unchanged.
+
+Local verification: 49 cloud tests passed, including five new integration tests for public pages/downloads, canonical redirects, owner-cookie/API isolation, WebSocket refusal, path confinement and forwarded-host spoofing. Cloud TypeScript checks and production build passed. All five public-site fixture tests and its production build passed. These checks do not constitute browser visual acceptance.
+
+DNS administration is now available at the existing registrar. A complete DNS export is retained privately before changes. Domain certificate activation, production delivery and hosted CI are tracked separately until verified; historical pending entries above describe their earlier checkpoints. The repaired-version reliability window continues with its original deadline. Any gateway deployment during that window is recorded as a transition, not a fresh 24-hour qualification of the deployed build.
