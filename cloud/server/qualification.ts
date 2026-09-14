@@ -1,7 +1,17 @@
 import { DatabaseSync } from 'node:sqlite'
 import type { createGateway } from './gateway.ts'
 type Gateway = ReturnType<typeof createGateway>
-type Target = { computer: string; agent: string; proof: string; expected: string }
+type Target = { computer: string; agent: string; proof: string; expected: string; screens?: string[] }
+export function failureCode(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  if (/timeout|timed out|acknowledg/.test(message)) return 'acknowledgment_timeout'
+  if (/offline|not connected/.test(message)) return 'offline'
+  if (/interrupt|closed|disconnect/.test(message)) return 'connection_interrupted'
+  if (/screen identity/.test(message)) return 'screen_identity_mismatch'
+  if (/repair needed/.test(message)) return 'screen_repair_needed'
+  if (/permission|unauthoriz|forbidden/.test(message)) return 'permission_required'
+  return 'unclassified_failure' // Never persist raw provider errors or credentials.
+}
 export class Qualification {
   db: DatabaseSync
   active = false
@@ -19,6 +29,7 @@ export class Qualification {
       CREATE TABLE IF NOT EXISTS trial(id INTEGER PRIMARY KEY CHECK(id=1),started INTEGER,ends INTEGER);
       CREATE TABLE IF NOT EXISTS probes(at INTEGER,computer TEXT,operation TEXT,ms REAL,ok INTEGER,error TEXT);
       CREATE TABLE IF NOT EXISTS windows(started INTEGER PRIMARY KEY,ends INTEGER,revision TEXT UNIQUE);
+      CREATE TABLE IF NOT EXISTS screen_observations(at INTEGER,computer TEXT,agent TEXT,state TEXT,display TEXT,paused INTEGER);
       CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,computer TEXT,agent TEXT,runtime TEXT,state TEXT,error TEXT);`)
     const initialized=this.db.prepare('SELECT started FROM trial WHERE id=1').get()
     this.db.prepare('INSERT OR IGNORE INTO trial VALUES(1,?,?)').run(now(), now() + 86400000)
@@ -53,8 +64,25 @@ export class Qualification {
     } catch (error) {
       this.db
         .prepare('INSERT INTO probes VALUES(?,?,?,?,0,?)')
-        .run(this.now(), computer, operation, performance.now() - started, (error as Error).name)
+        .run(this.now(), computer, operation, performance.now() - started, failureCode(error))
       throw error
+    }
+  }
+  async observeScreens(target: Target) {
+    for (const agent of [...new Set(target.screens || [])].slice(0, 16)) {
+      try {
+        const screen = await this.measured(target.computer, 'screen.status', { agentId: agent })
+        if (screen.computerId !== target.computer || screen.profile !== agent)
+          throw Error('Screen identity mismatch')
+        const state = ['ready', 'starting', 'waiting', 'unassigned', 'repair_needed'].includes(screen.state)
+          ? screen.state : 'unknown'
+        this.db.prepare('INSERT INTO screen_observations VALUES(?,?,?,?,?,?)')
+          .run(this.now(), target.computer, agent, state, screen.display || null, screen.paused ? 1 : 0)
+        if (state === 'repair_needed' || state === 'unknown') throw Error('Screen repair needed')
+      } catch (error) {
+        this.db.prepare('INSERT INTO probes VALUES(?,?,?,?,0,?)')
+          .run(this.now(), target.computer, 'screen.health', 0, failureCode(error))
+      }
     }
   }
   async tick() {
@@ -73,6 +101,7 @@ export class Qualification {
           if (!roster.agents.some((a: { id: string }) => a.id === target.agent))
             throw new Error('Qualification agent unavailable')
           const snapshot = await this.measured(target.computer, 'tasks.list')
+          await this.observeScreens(target)
           for (const task of snapshot.deliveries) {
             const known = this.db
               .prepare('SELECT state FROM jobs WHERE id=? AND computer=? AND agent=?')
@@ -130,7 +159,7 @@ export class Qualification {
           // ambiguous tool execution is restarted with a new request identity.
           this.db
             .prepare('INSERT INTO probes VALUES(?,?,?,?,0,?)')
-            .run(this.now(), target.computer, 'qualification', 0, (error as Error).name)
+            .run(this.now(), target.computer, 'qualification', 0, failureCode(error))
         }
       }
     } finally {
@@ -153,7 +182,9 @@ export class Qualification {
       state: this.now() < trial.ends ? 'running' : 'finished-awaiting-review',
       elapsedHours: Math.min(24, (this.now() - trial.started) / 3600000),
       scope:
-        'Backend availability and persistent file-tool tasks. Browser visuals and switching require separate acceptance.',
+        'Backend availability, persistent file-tool tasks and optional read-only screen ownership status. Screen pixels, input, browser visuals and switching require separate acceptance.',
+      screenStates: this.db.prepare('SELECT computer,agent,state,paused,count(*) AS samples FROM screen_observations WHERE at>=? GROUP BY computer,agent,state,paused').all(trial.started),
+      failureReasons: this.db.prepare('SELECT computer,operation,error,count(*) AS count FROM probes WHERE at>=? AND ok=0 GROUP BY computer,operation,error').all(trial.started),
       probes: measurements.map(row => {
         const values = this.db
           .prepare('SELECT ms FROM probes WHERE operation=? AND ok=1 AND at>=? ORDER BY ms')

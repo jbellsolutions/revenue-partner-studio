@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { Qualification } from '../server/qualification.ts'
+import { Qualification, failureCode } from '../server/qualification.ts'
 test('trial restarts inspect accepted work and stop after 24 hours', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'studio-trial-'))
   let now = 100000,
@@ -96,4 +96,29 @@ test('a named requalification preserves failed evidence and restarts the 24-hour
     assert.equal(q.summary().started,2000)
     assert.equal(q.summary().previousWindows.length,1)
   } finally {await q.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+test('screen qualification observes ownership without allocating screens or exposing errors', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'studio-screen-trial-'))
+  const calls: string[] = []
+  const gateway: any = { rpc: async (computer: string, method: string, params: any) => {
+    calls.push(method)
+    assert.equal(method, 'screen.status')
+    if (params.agentId === 'wrong') return { computerId: 'other', profile: 'wrong', state: 'ready' }
+    if (params.agentId === 'failed') throw Error('Connection interrupted with PRIVATE-CONTENT')
+    return { computerId: computer, profile: params.agentId, state: params.agentId === 'queued' ? 'waiting' : 'ready', paused: params.agentId === 'human', display: ':100' }
+  } }
+  const q = new Qualification(gateway, path.join(dir, 'trial.db'), [])
+  try {
+    await q.observeScreens({ computer: 'c', agent: 'qa', proof: '', expected: '', screens: ['live', 'human', 'queued', 'wrong', 'failed'] })
+    const summary = q.summary()
+    assert.equal(calls.length, 5)
+    assert.equal(summary.screenStates.length, 3)
+    assert.ok(summary.screenStates.some(row => row.state === 'waiting'))
+    assert.ok(summary.screenStates.some(row => row.paused === 1))
+    assert.ok(summary.failureReasons.some(row => row.error === 'screen_identity_mismatch'))
+    assert.ok(summary.failureReasons.some(row => row.error === 'connection_interrupted'))
+    assert.ok(!JSON.stringify(summary).includes('PRIVATE-CONTENT'))
+    assert.equal(failureCode(Error('some unknown error containing PRIVATE-CONTENT')), 'unclassified_failure')
+  } finally { await q.close(); rmSync(dir, { recursive: true, force: true }) }
 })
