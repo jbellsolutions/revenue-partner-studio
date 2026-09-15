@@ -32,7 +32,7 @@ type Pending = {
 }
 type Viewer = { id: string; socket: WebSocket; computer: string; cursor: number; replaying: boolean; buffer: any[] }
 type Client = WebSocket & {
-  alive?: boolean
+  pingSentAt?: number
   sessionToken?: string
   transport?: { computer: string; admitted: boolean; opened: number; lastPong: number; lastMessage?: number; cause: string }
 }
@@ -354,9 +354,8 @@ export function createGateway(options: Options) {
     }
     wss.handleUpgrade(req, socket, head, async ws => {
       ws.on('error', () => {})
-      ;(ws as Client).alive = true
       ws.on('pong', () => {
-        ;(ws as Client).alive = true
+        ;(ws as Client).pingSentAt = undefined
         if ((ws as Client).transport) (ws as Client).transport!.lastPong = performance.now()
       })
       if (!remote) {
@@ -599,12 +598,18 @@ export function createGateway(options: Options) {
         c.close(1008, 'Session expired')
         continue
       }
-      if (c.alive === false) {
-        if (c.transport) c.transport.cause = 'heartbeat_timeout'
-        c.terminate()
+      if (c.readyState !== WebSocket.OPEN) continue
+      if (c.pingSentAt !== undefined) {
+        // A single missed two-second polling tick is not a failed computer.
+        // Keep one outstanding ping and give its reply a bounded grace period;
+        // subsequent ticks must not reset the deadline or evict a live owner.
+        if (performance.now() - c.pingSentAt >= 6000) {
+          if (c.transport) c.transport.cause = 'heartbeat_timeout'
+          c.terminate()
+        }
         continue
       }
-      c.alive = false
+      c.pingSentAt = performance.now()
       c.ping()
     }
     for (const [k, t] of tickets) if (t.expires < Date.now() && !t.browser && !t.remote) tickets.delete(k)

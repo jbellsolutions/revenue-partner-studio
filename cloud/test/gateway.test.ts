@@ -162,7 +162,30 @@ test('a returning connector waits for its previous owner to close without replay
   assert.deepEqual(await f.gateway.rpc(A, 'connection.status', {}), { computerId: A })
   assert.equal(f.gateway.connectors.size, 1)
 })
-test('gateway heartbeat diagnostics identify the closer without recording private frames', { timeout: 7000 }, async t => {
+test('a delayed heartbeat reply preserves its authenticated connector and pending work', { timeout: 10000 }, async t => {
+  const f = await fixture(t)
+  const client = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token }, { autoPong: false })
+  let replyTimer: ReturnType<typeof setTimeout> | undefined
+  t.after(() => clearTimeout(replyTimer))
+  const replied = new Promise<void>(resolve => client.socket.once('ping', data => {
+    replyTimer = setTimeout(() => {
+      if (client.socket.readyState === WebSocket.OPEN) client.socket.pong(data)
+      resolve()
+    }, 2500)
+  }))
+  const work = f.gateway.rpc(A, 'status', {})
+  // Retain rejection until the assertions so the old premature timeout is a
+  // normal test failure rather than an unhandled rejection.
+  const result = work.then(value => ({ value }), error => ({ error }))
+  await until(() => client.messages.some(m => m.type === 'request'))
+  await replied
+  assert.equal(client.socket.readyState, WebSocket.OPEN)
+  assert.equal(f.gateway.connectors.size, 1)
+  const request = client.messages.find(m => m.type === 'request')
+  client.socket.send(JSON.stringify({ type: 'response', computerId: A, id: request.id, result: { computerId: A } }))
+  assert.deepEqual(await result, { value: { computerId: A } })
+})
+test('gateway heartbeat diagnostics identify the closer without recording private frames', { timeout: 12000 }, async t => {
   const reports: any[] = []
   t.mock.method(console, 'info', (value: string) => reports.push(JSON.parse(value)))
   const f = await fixture(t)
@@ -174,7 +197,8 @@ test('gateway heartbeat diagnostics identify the closer without recording privat
   assert.equal(report.admitted, true)
   assert.equal(report.cause, 'heartbeat_timeout')
   assert.equal(report.closeCode, 1006)
-  assert.ok(report.sincePongMs >= 2000 && report.sinceMessageMs >= 0)
+  assert.ok(report.sincePongMs >= 6000 && report.sinceMessageMs >= 0)
+  assert.ok(report.lifetimeMs <= 10500, 'An unresponsive connector is still disconnected within a bounded interval')
   assert.equal(JSON.stringify(reports).includes('private-frame-content'), false)
   assert.equal(JSON.stringify(reports).includes(f.a.token), false)
 })
