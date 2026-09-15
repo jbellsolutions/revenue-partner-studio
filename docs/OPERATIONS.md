@@ -62,6 +62,8 @@ Each computer has one persisted incident ID. API and SSH attempts share that rec
 
 An opened but unused chat may have no persisted Hermes history. For older queued turns, reconciliation follows their existing accepted request and completed delivery to the same profile's stored history. Neither case creates a replacement task or moves messages between profiles. Missing or mismatched evidence still requires review.
 
+Private gateway logs include `studio.connector.closed` diagnostics with the computer identity, admission state, gateway close cause, close code and monotonic ages of the last pong and data message. They omit frames, credentials and untrusted close text. Distinguish a gateway heartbeat timeout, shutdown, ownership conflict or backpressure from an unexplained peer/network close before changing connection policy. Compare gateway timestamps with the computer's retained observer records; cloud and computer clocks may differ.
+
 ### Optional restricted SSH
 
 SSH is disabled until an installation assistant has verified a real provider endpoint, the computer binding, host fingerprint, and a dedicated restricted key. An SSH daemon or a VNC address does not prove native Orgo SSH reachability. Do not infer endpoints or replace images to obtain support.

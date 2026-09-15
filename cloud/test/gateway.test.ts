@@ -36,8 +36,8 @@ async function fixture(t: any, allowedOrigins: string[] = []) {
       headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json', ...override },
       body: JSON.stringify(body)
     })
-  async function ws(route: string, headers: any) {
-    const socket = new WebSocket(url.replace('http:', 'ws:') + route, { headers })
+  async function ws(route: string, headers: any, options = {}) {
+    const socket = new WebSocket(url.replace('http:', 'ws:') + route, { ...options, headers })
     const messages: any[] = []
     socket.on('message', r => messages.push(JSON.parse(r.toString())))
     await once(socket, 'open')
@@ -161,6 +161,22 @@ test('a returning connector waits for its previous owner to close without replay
   })
   assert.deepEqual(await f.gateway.rpc(A, 'connection.status', {}), { computerId: A })
   assert.equal(f.gateway.connectors.size, 1)
+})
+test('gateway heartbeat diagnostics identify the closer without recording private frames', { timeout: 7000 }, async t => {
+  const reports: any[] = []
+  t.mock.method(console, 'info', (value: string) => reports.push(JSON.parse(value)))
+  const f = await fixture(t)
+  const client = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token }, { autoPong: false })
+  client.socket.send(JSON.stringify({ type: 'event', computerId: A, seq: 1, payload: { text: 'private-frame-content' } }))
+  await once(client.socket, 'close')
+  const report = await until(() => reports.find(r => r.event === 'studio.connector.closed'))
+  assert.equal(report.computerId, A)
+  assert.equal(report.admitted, true)
+  assert.equal(report.cause, 'heartbeat_timeout')
+  assert.equal(report.closeCode, 1006)
+  assert.ok(report.sincePongMs >= 2000 && report.sinceMessageMs >= 0)
+  assert.equal(JSON.stringify(reports).includes('private-frame-content'), false)
+  assert.equal(JSON.stringify(reports).includes(f.a.token), false)
 })
 test('an online Mac can prepare a repair without replacing its connection or credential', async t => {
   const f = await fixture(t)

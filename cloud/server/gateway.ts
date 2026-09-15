@@ -31,7 +31,11 @@ type Pending = {
   timer: ReturnType<typeof setTimeout>
 }
 type Viewer = { id: string; socket: WebSocket; computer: string; cursor: number; replaying: boolean; buffer: any[] }
-type Client = WebSocket & { alive?: boolean; sessionToken?: string }
+type Client = WebSocket & {
+  alive?: boolean
+  sessionToken?: string
+  transport?: { computer: string; admitted: boolean; opened: number; lastPong: number; lastMessage?: number; cause: string }
+}
 const METHODS = new Set([
   'connection.status', 'connection.reconcile', 'screen.status', 'screen.repair', 'screen.capacity', 'profile.settings.get', 'profile.settings.update',
   'models.options', 'models.select', 'models.status', 'skills.update', 'endpoints.configure', 'endpoints.list',
@@ -114,6 +118,7 @@ export function createGateway(options: Options) {
   const send = (ws: WebSocket, value: unknown) => {
     if (ws.readyState === WebSocket.OPEN) {
       if (ws.bufferedAmount > 8 * 1024 * 1024) {
+        if ((ws as Client).transport) (ws as Client).transport!.cause = 'backpressure'
         ws.close(1013, 'Reconnect to catch up')
         return
       }
@@ -352,12 +357,28 @@ export function createGateway(options: Options) {
       ;(ws as Client).alive = true
       ws.on('pong', () => {
         ;(ws as Client).alive = true
+        if ((ws as Client).transport) (ws as Client).transport!.lastPong = performance.now()
       })
       if (!remote) {
         sessions.set(ws, token(req))
         ws.on('close', () => sessions.delete(ws))
       }
       if (url.pathname === '/connect') {
+        const transport = { computer, admitted: false, opened: performance.now(), lastPong: performance.now(), lastMessage: undefined as number | undefined, cause: 'peer_or_network' }
+        ;(ws as Client).transport = transport
+        ws.on('message', () => { transport.lastMessage = performance.now() })
+        ws.on('close', code => {
+          // Retain the gateway's reason without logging frames, bearer tokens,
+          // provider errors or remote close text. A recovered socket otherwise
+          // erases the evidence needed to distinguish a heartbeat from a proxy.
+          const now = performance.now()
+          try {
+            console.info(JSON.stringify({ event: 'studio.connector.closed', at: Date.now(), computerId: computer,
+              admitted: transport.admitted, cause: transport.cause, closeCode: code,
+              lifetimeMs: Math.round(now - transport.opened), sincePongMs: Math.round(now - transport.lastPong),
+              sinceMessageMs: transport.lastMessage === undefined ? null : Math.round(now - transport.lastMessage) }))
+          } catch {} // Observability must not prevent normal socket cleanup.
+        })
         const previous = connectors.get(computer)
         if (previous) {
           // A client may detect a broken connection before its gateway socket
@@ -377,10 +398,12 @@ export function createGateway(options: Options) {
         }
         if (ws.readyState !== WebSocket.OPEN) return
         if (connectors.has(computer)) {
+          transport.cause = 'owner_conflict'
           ws.close(1008, 'A connector already owns this computer')
           return
         }
         connectors.set(computer, ws)
+        transport.admitted = true
         send(ws, { type: 'hello', computerId: computer, protocol: 1 })
         store.db.prepare('UPDATE computers SET last_seen=? WHERE id=?').run(Date.now(),computer)
         publishDirectory()
@@ -467,6 +490,7 @@ export function createGateway(options: Options) {
                 computers: store.computers().map(c => ({ ...c, online: connectors.has(c.id) }))
               })
           } catch {
+            transport.cause = 'invalid_frame'
             ws.close(1008, 'Invalid connector frame')
           }
         })
@@ -576,6 +600,7 @@ export function createGateway(options: Options) {
         continue
       }
       if (c.alive === false) {
+        if (c.transport) c.transport.cause = 'heartbeat_timeout'
         c.terminate()
         continue
       }
@@ -602,7 +627,10 @@ export function createGateway(options: Options) {
         p.reject(new Error('Gateway stopping'))
       }
       pending.clear()
-      for (const ws of wss.clients) ws.terminate()
+      for (const ws of wss.clients) {
+        if ((ws as Client).transport) (ws as Client).transport!.cause = 'gateway_shutdown'
+        ws.terminate()
+      }
       await Promise.all([
         recovering,
         new Promise<void>(resolve => wss.close(() => resolve())),
