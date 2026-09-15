@@ -145,10 +145,12 @@ class Connector:
         if error:
             value['errorType']=type(error).__name__
             received=getattr(error,'rcvd',None)
-            if received:
-                value['closeCode']=received.code
-                safe={'Invalid connector frame','Computer identity mismatch','Stopped on Mac','A connector already owns this computer','Session ended'}
-                value['reason']=received.reason if received.reason in safe else 'Connection closed'
+            frame=received or getattr(error,'sent',None)
+            if frame:
+                value['closeCode']=frame.code
+                value['closeDirection']='received' if received else 'sent'
+                safe={'Invalid connector frame','Computer identity mismatch','Stopped on Mac','A connector already owns this computer','Session ended','keepalive ping timeout'}
+                value['reason']=frame.reason if frame.reason in safe else 'Connection closed'
         try:
             atomic_write(self.base/(area+'-connection.json'),json.dumps(value).encode())
         except OSError:
@@ -401,7 +403,7 @@ class Connector:
                     'epoch': self.runtime_epoch, 'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
                     'state': 'ready' if connected else 'hermes_unavailable', 'message': error,
                     'runtimeVersion': capabilities.get('extensionVersion', 'legacy'),
-                    'connectorVersion': 'connector-recovery-1.1', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
+                    'connectorVersion': 'connector-recovery-1.2', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
         if method=='import.preview':
             from .cloud_library import Library
             if p.get('bundle'):return await asyncio.to_thread(Library(self.home).preview,self.computer,p['bundle'])
@@ -855,6 +857,41 @@ class Connector:
                 t.exception()  # Do not log private request payloads or credentials.
         task.add_done_callback(done)
 
+    async def cloud_handshake(self, ws):
+        # Opening TCP/WebSocket does not mean the gateway accepted ownership.
+        # Older gateways send their initial directory/permissions before hello.
+        buffered = []
+        async with asyncio.timeout(8):
+            while len(buffered) < 16:
+                message = json.loads(await ws.recv())
+                if message.get('computerId') != self.computer:
+                    raise ValueError('Cloud computer identity mismatch')
+                if message.get('type') == 'hello' and message.get('protocol') == 1:
+                    return buffered
+                if message.get('type') not in {'peers', 'permissions'}:
+                    raise ValueError('Unexpected frame before connector admission')
+                buffered.append(message)
+        raise ValueError('Too many frames before connector admission')
+
+    def cloud_message(self, message, token):
+        if message.get('computerId', self.computer) != self.computer:
+            raise ValueError('Cloud computer identity mismatch')
+        if message['type'] == 'request':
+            self.spawn(self.request(message))
+        elif message['type'] == 'replay':
+            self.spawn(self.replay(message.get('after', 0), message['viewerId']))
+        elif message['type'] == 'screen.connect':
+            self.spawn(self.screen_tunnel(message))
+        elif message['type'] == 'peers':
+            self.peers = message.get('computers', [])
+        elif message['type'] == 'permissions':
+            from .cloud_permissions import receive
+            receive(self.home, self.computer, message['proof'], token)
+        elif message['type'] == 'peer.response':
+            f = self.peer_pending.get(message['id'])
+            if f and not f.done():
+                f.set_exception(RuntimeError(message['error'])) if message.get('error') else f.set_result(message.get('result'))
+
     async def run(self):
         self.spawn(self.hermes_loop())
         self.spawn(self.peer_loop())
@@ -875,29 +912,15 @@ class Connector:
                 async with connect(base + '/connect?' + urlencode({'computerId': self.computer}),
                                    additional_headers={'Authorization': 'Bearer ' + token},
                                    max_size=70*1024*1024, ping_interval=2, ping_timeout=3) as ws:
+                    buffered = await self.cloud_handshake(ws)
                     self.cloud = ws
                     self.connection_diagnostic('cloud')
                     delay = 1
+                    for message in buffered:
+                        self.cloud_message(message, token)
                     await self.cloud_send({'type': 'peers.list'})
                     async for raw in ws:
-                        message = json.loads(raw)
-                        if message.get('computerId', self.computer) != self.computer:
-                            raise ValueError('Cloud computer identity mismatch')
-                        if message['type'] == 'request':
-                            self.spawn(self.request(message))
-                        elif message['type'] == 'replay':
-                            self.spawn(self.replay(message.get('after', 0), message['viewerId']))
-                        elif message['type'] == 'screen.connect':
-                            self.spawn(self.screen_tunnel(message))
-                        elif message['type'] == 'peers':
-                            self.peers = message.get('computers', [])
-                        elif message['type']=='permissions':
-                            from .cloud_permissions import receive
-                            receive(self.home,self.computer,message['proof'],token)
-                        elif message['type'] == 'peer.response':
-                            f = self.peer_pending.get(message['id'])
-                            if f and not f.done():
-                                f.set_exception(RuntimeError(message['error'])) if message.get('error') else f.set_result(message.get('result'))
+                        self.cloud_message(json.loads(raw), token)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

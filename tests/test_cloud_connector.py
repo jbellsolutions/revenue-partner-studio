@@ -27,6 +27,42 @@ def test_diagnostic_disk_failure_does_not_disconnect_transport(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_cloud_readiness_waits_for_authenticated_hello_and_preserves_legacy_frames(tmp_path):
+    import asyncio
+    c=connector(tmp_path)
+    waiting=asyncio.Future()
+    ws=AsyncMock()
+    async def receive():
+        if ws.recv.await_count == 1:return json.dumps({'type':'permissions','computerId':c.computer,'proof':{}})
+        return await waiting
+    ws.recv.side_effect=receive
+    admission=asyncio.create_task(c.cloud_handshake(ws))
+    await asyncio.sleep(0)
+    assert c.cloud is None and not (c.base/'cloud-connection.json').exists()
+    waiting.set_result(json.dumps({'type':'hello','computerId':c.computer,'protocol':1}))
+    assert await admission == [{'type':'permissions','computerId':c.computer,'proof':{}}]
+    ws.recv=AsyncMock(return_value=json.dumps({'type':'hello','computerId':'another-computer','protocol':1}))
+    with pytest.raises(ValueError,match='identity'):await c.cloud_handshake(ws)
+    ws.recv=AsyncMock(return_value=json.dumps({'type':'request','computerId':c.computer,'method':'chat.send'}))
+    with pytest.raises(ValueError,match='admission'):await c.cloud_handshake(ws)
+
+
+def test_transport_diagnostics_distinguish_local_keepalive_from_remote_rejection(tmp_path):
+    from types import SimpleNamespace
+    c=connector(tmp_path)
+    error=ConnectionError('sensitive raw exception must not be copied')
+    error.rcvd=None;error.sent=SimpleNamespace(code=1011,reason='keepalive ping timeout')
+    c.connection_diagnostic('cloud',error)
+    data=json.loads((c.base/'cloud-connection.json').read_text())
+    assert data['closeCode']==1011 and data['closeDirection']=='sent'
+    assert data['reason']=='keepalive ping timeout' and 'sensitive' not in json.dumps(data)
+    error.rcvd=SimpleNamespace(code=1008,reason='A connector already owns this computer')
+    c.connection_diagnostic('cloud',error)
+    data=json.loads((c.base/'cloud-connection.json').read_text())
+    assert data['closeCode']==1008 and data['closeDirection']=='received'
+
+
+@pytest.mark.asyncio
 async def test_peer_handoff_carries_selected_source_agent_to_native_outbox(tmp_path):
     c=connector(tmp_path);child=c.home/'profiles/email';child.mkdir(parents=True);(child/'config.yaml').write_text('model: test')
     c.rpc=AsyncMock(return_value={'accepted':True})

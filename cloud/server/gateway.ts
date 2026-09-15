@@ -347,7 +347,8 @@ export function createGateway(options: Options) {
       socket.destroy()
       return
     }
-    wss.handleUpgrade(req, socket, head, ws => {
+    wss.handleUpgrade(req, socket, head, async ws => {
+      ws.on('error', () => {})
       ;(ws as Client).alive = true
       ws.on('pong', () => {
         ;(ws as Client).alive = true
@@ -357,11 +358,30 @@ export function createGateway(options: Options) {
         ws.on('close', () => sessions.delete(ws))
       }
       if (url.pathname === '/connect') {
+        const previous = connectors.get(computer)
+        if (previous) {
+          // A client may detect a broken connection before its gateway socket
+          // closes. Wait for that owner to leave; never evict a live owner.
+          await new Promise<void>(resolve => {
+            const finished = () => {
+              clearTimeout(timer)
+              previous.off('close', finished)
+              ws.off('close', finished)
+              resolve()
+            }
+            const timer = setTimeout(finished, 3000)
+            previous.once('close', finished)
+            ws.once('close', finished)
+            if (previous.readyState === WebSocket.CLOSED || ws.readyState !== WebSocket.OPEN) finished()
+          })
+        }
+        if (ws.readyState !== WebSocket.OPEN) return
         if (connectors.has(computer)) {
           ws.close(1008, 'A connector already owns this computer')
           return
         }
         connectors.set(computer, ws)
+        send(ws, { type: 'hello', computerId: computer, protocol: 1 })
         store.db.prepare('UPDATE computers SET last_seen=? WHERE id=?').run(Date.now(),computer)
         publishDirectory()
         publishPermissions()
@@ -372,7 +392,6 @@ export function createGateway(options: Options) {
             computers: store.computers().map(item => ({ ...item, online: connectors.has(item.id) }))
           })
         broadcast(computer, { type: 'connection', computerId: computer, online: true })
-        send(ws, { type: 'hello', computerId: computer, protocol: 1 })
         for (const v of viewers)
           if (v.computer === computer) {
             v.replaying = true

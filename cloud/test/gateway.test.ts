@@ -142,6 +142,26 @@ test('duplicate connectors cannot replace an authenticated live owner', async t 
   assert.equal(code, 1008)
   assert.equal(first.socket.readyState, WebSocket.OPEN)
 })
+test('a returning connector waits for its previous owner to close without replaying pending work', async t => {
+  const f = await fixture(t)
+  const first = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token })
+  const pending = f.gateway.rpc(A, 'chat.send', { agentId: 'default', text: 'one task' }, 'retained-task')
+  const interrupted = assert.rejects(pending, /Connection interrupted/)
+  await until(() => first.messages.some(m => m.type === 'request'))
+  const second = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token })
+  await new Promise(r => setTimeout(r, 50))
+  assert.equal(second.messages.some(m => m.type === 'hello'), false)
+  first.socket.close()
+  await interrupted
+  await until(() => second.messages.some(m => m.type === 'hello'))
+  assert.equal(second.messages.some(m => m.type === 'request' && m.requestId === 'retained-task'), false)
+  second.socket.on('message', raw => {
+    const m = JSON.parse(raw.toString())
+    if (m.type === 'request') second.socket.send(JSON.stringify({ type: 'response', computerId: A, id: m.id, result: { computerId: A } }))
+  })
+  assert.deepEqual(await f.gateway.rpc(A, 'connection.status', {}), { computerId: A })
+  assert.equal(f.gateway.connectors.size, 1)
+})
 test('an online Mac can prepare a repair without replacing its connection or credential', async t => {
   const f = await fixture(t)
   f.store.db.prepare("UPDATE computers SET kind='local',platform='darwin' WHERE id=?").run(A)
