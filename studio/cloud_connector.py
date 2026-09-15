@@ -173,18 +173,47 @@ class Connector:
         result = await self.recover_sessions()
         if result is None:
             return {'computerId': self.computer, 'reconciled': False}
-        missing = 0
+        missing = unused = legacy = 0
+        def stored_exists(agent, stored):
+            db_path, sid, _ = self.history_source(agent, stored)
+            if not sid: return False
+            with contextlib.closing(sqlite3.connect(db_path.as_uri() + '?mode=ro', uri=True)) as db:
+                return bool(db.execute('SELECT 1 FROM sessions WHERE id=?', (sid,)).fetchone())
         for row in result['rows']:
             if row['runtime'] in result['recovered']: continue
             saved = self.ledger.session(row['runtime'], row['agent']).get('stored')
             try:
-                db_path, sid, _ = self.history_source(row['agent'], saved)
-                if not sid: continue  # An empty, expired chat has no history to recover.
-                with contextlib.closing(sqlite3.connect(db_path.as_uri() + '?mode=ro', uri=True)) as db:
-                    if not db.execute('SELECT 1 FROM sessions WHERE id=?', (sid,)).fetchone(): missing += 1
-            except (ValueError, OSError, sqlite3.Error): missing += 1
+                if stored_exists(row['agent'], saved): continue
+            except (ValueError, OSError, sqlite3.Error): pass
+            requests = list(self.ledger.db.execute(
+                "SELECT id,state,result FROM requests WHERE method='chat.send' AND json_extract(params,'$.runtimeId')=?",
+                (row['runtime'],)))
+            activity = self.ledger.db.execute(
+                "SELECT 1 FROM events WHERE session=? AND (kind LIKE 'message.%' OR kind LIKE 'tool.%' OR kind='studio.task') LIMIT 1",
+                (row['runtime'],)).fetchone()
+            if not requests and not activity:
+                # Hermes only persists a newly opened chat after it is used.
+                unused += 1
+                continue
+            # Early Studio queued turns in separate native sessions. Their
+            # original, profile-bound delivery receipts remain authoritative.
+            preserved = bool(requests)
+            try:
+                task_store = self.home / ('studio/workspace.sqlite3' if self.config.get('kind') == 'local' else 'studio-cloud/runtime/workspace.sqlite3')
+                with contextlib.closing(sqlite3.connect(task_store.as_uri() + '?mode=ro', uri=True)) as db:
+                    for request in requests:
+                        task = json.loads(request['result'] or '{}').get('taskId')
+                        delivery = db.execute('SELECT recipient,state,stored_id FROM deliveries WHERE id=?', (task,)).fetchone()
+                        if (request['state'] != 'accepted' or not delivery or delivery[0] != row['agent'] or
+                                delivery[1] != 'complete' or not stored_exists(row['agent'], delivery[2])):
+                            preserved = False
+                            break
+            except (ValueError, OSError, sqlite3.Error): preserved = False
+            if preserved: legacy += 1
+            else: missing += 1
         return {'computerId': self.computer, 'reconciled': missing == 0,
-                'recovered': len(result['recovered']), 'needsReview': missing}
+                'recovered': len(result['recovered']), 'unused': unused,
+                'legacyHistoriesVerified': legacy, 'needsReview': missing}
 
     async def hermes_loop(self):
         while True:
@@ -372,7 +401,7 @@ class Connector:
                     'epoch': self.runtime_epoch, 'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
                     'state': 'ready' if connected else 'hermes_unavailable', 'message': error,
                     'runtimeVersion': capabilities.get('extensionVersion', 'legacy'),
-                    'connectorVersion': 'connector-recovery-1', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
+                    'connectorVersion': 'connector-recovery-1.1', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
         if method=='import.preview':
             from .cloud_library import Library
             if p.get('bundle'):return await asyncio.to_thread(Library(self.home).preview,self.computer,p['bundle'])

@@ -196,6 +196,34 @@ async def test_connection_reconciliation_checks_expired_history_in_original_prof
     assert result['reconciled'] is True
     assert [call.args[0] for call in c.rpc.call_args_list] == ['studio.capabilities', 'studio.sessions.recover']
     c.ledger.bind('other-expired', 'other', 'saved')
+    c.ledger.begin('other-request', 'chat.send', {'runtimeId':'other-expired'})
+    c.ledger.finish('other-request', {'taskId':'missing-task'})
+    c.rpc = AsyncMock(side_effect=[{'transportRecovery': True}, {'recovered': []}])
+    result = await c.operation('connection.reconcile', {}, 'check')
+    assert result['reconciled'] is False and result['needsReview'] == 1
+
+
+@pytest.mark.asyncio
+async def test_unused_sessions_and_verified_legacy_delivery_histories_do_not_break_connection(tmp_path):
+    import sqlite3
+    c = connector(tmp_path)
+    c.ledger.bind('unused', 'default', 'never-persisted')
+    c.ledger.bind('legacy', 'default', 'legacy-ui-session')
+    c.ledger.begin('legacy-send', 'chat.send', {'runtimeId':'legacy'})
+    c.ledger.finish('legacy-send', {'taskId':'legacy-task'})
+    with sqlite3.connect(c.home / 'state.db') as db:
+        db.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY)')
+        db.execute("INSERT INTO sessions VALUES('actual-history')")
+    folder = c.home / 'studio-cloud/runtime';folder.mkdir(parents=True)
+    with sqlite3.connect(folder / 'workspace.sqlite3') as db:
+        db.execute('CREATE TABLE deliveries(id TEXT,recipient TEXT,state TEXT,stored_id TEXT)')
+        db.execute("INSERT INTO deliveries VALUES('legacy-task','default','complete','actual-history')")
+    c.rpc = AsyncMock(side_effect=[{'transportRecovery': True}, {'recovered': []}])
+    result = await c.operation('connection.reconcile', {}, 'check')
+    assert result['reconciled'] is True
+    assert result['unused'] == result['legacyHistoriesVerified'] == 1
+    with sqlite3.connect(folder / 'workspace.sqlite3') as db:
+        db.execute("UPDATE deliveries SET recipient='another-profile'")
     c.rpc = AsyncMock(side_effect=[{'transportRecovery': True}, {'recovered': []}])
     result = await c.operation('connection.reconcile', {}, 'check')
     assert result['reconciled'] is False and result['needsReview'] == 1

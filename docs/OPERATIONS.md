@@ -60,6 +60,8 @@ Each computer has one persisted incident ID. API and SSH attempts share that rec
 
 `GET /api/computers` includes optional `recovery` information: state, detail, reachability, connector, Hermes readiness, saved-conversation readiness, last successful check and whether restricted SSH is configured. `POST /api/connections/repair` with `computerId` requests the same bounded checks. `connection.reconcile` reattaches surviving sessions and verifies expired histories in their original profiles; it never submits a prompt. Individual conversations and screens retain their own readiness and errors.
 
+An opened but unused chat may have no persisted Hermes history. For older queued turns, reconciliation follows their existing accepted request and completed delivery to the same profile's stored history. Neither case creates a replacement task or moves messages between profiles. Missing or mismatched evidence still requires review.
+
 ### Optional restricted SSH
 
 SSH is disabled until an installation assistant has verified a real provider endpoint, the computer binding, host fingerprint, and a dedicated restricted key. An SSH daemon or a VNC address does not prove native Orgo SSH reachability. Do not infer endpoints or replace images to obtain support.
