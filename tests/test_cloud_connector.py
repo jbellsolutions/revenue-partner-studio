@@ -179,3 +179,23 @@ async def test_empty_timeout_cannot_be_misreported_as_a_success(tmp_path):
     c=connector(tmp_path);c.operation=AsyncMock(side_effect=TimeoutError());c.cloud_send=AsyncMock()
     await c.request({'id':'transport','requestId':'timeout','method':'providers.keys','params':{'agentId':'default'}})
     assert 'did not respond in time' in c.cloud_send.call_args.args[0]['error']
+
+
+@pytest.mark.asyncio
+async def test_connection_reconciliation_checks_expired_history_in_original_profile_without_prompt(tmp_path):
+    import sqlite3
+    c = connector(tmp_path)
+    other = c.home / 'profiles/other';other.mkdir(parents=True);(other / 'config.yaml').write_text('model: test')
+    for folder in [c.home, other]:
+        with sqlite3.connect(folder / 'state.db') as db:
+            db.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY)')
+    with sqlite3.connect(c.home / 'state.db') as db: db.execute("INSERT INTO sessions VALUES('saved')")
+    c.ledger.bind('expired', 'default', 'saved')
+    c.rpc = AsyncMock(side_effect=[{'transportRecovery': True}, {'recovered': []}])
+    result = await c.operation('connection.reconcile', {}, 'check')
+    assert result['reconciled'] is True
+    assert [call.args[0] for call in c.rpc.call_args_list] == ['studio.capabilities', 'studio.sessions.recover']
+    c.ledger.bind('other-expired', 'other', 'saved')
+    c.rpc = AsyncMock(side_effect=[{'transportRecovery': True}, {'recovered': []}])
+    result = await c.operation('connection.reconcile', {}, 'check')
+    assert result['reconciled'] is False and result['needsReview'] == 1

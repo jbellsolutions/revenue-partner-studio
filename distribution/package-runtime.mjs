@@ -22,6 +22,7 @@ try {
   execFileSync('tar',['-czf',join(output,'runtime.tar.gz'),'-C',temp,'.'],{env:{...process.env,COPYFILE_DISABLE:'1'}})
   writeFileSync(join(output,'runtime.sha256'),createHash('sha256').update(readFileSync(join(output,'runtime.tar.gz'))).digest('hex'))
   copyFileSync(join(root,'distribution/connect.py'),join(output,'connect.py'))
+  copyFileSync(join(root,'distribution/recover.py'),join(output,'recover.py'))
   copyFileSync(join(root,'distribution/connect-local.py'),join(output,'connect-local.py'))
   console.log('Created the Studio runtime package and checksum.')
 } finally {rmSync(temp,{recursive:true,force:true})}

@@ -39,7 +39,7 @@ import { ACCEPT, checkFiles, uploadAttachment, type Attachment } from './attachm
 import '../../apps/desktop/src/app/bot-product/shell.css'
 import './style.css'
 
-type Computer = { id: string; name: string; online: boolean; kind?: string }
+type Computer = { id: string; name: string; online: boolean; kind?: string; recovery?: {state:string;detail:string} }
 const title = (agent: Agent) =>
   agent.name === 'default'
     ? 'Head of Operations'
@@ -205,7 +205,8 @@ function App() {
     let disposed = false,
       socket: WebSocket | undefined,
       retry: ReturnType<typeof setTimeout> | undefined,
-      delay = 500
+      delay = 500,
+      viewerReconnected = false
     let deltaTimer: ReturnType<typeof setTimeout> | undefined
     let deltas: any[] = []
     const flushDeltas = () => {
@@ -231,8 +232,16 @@ function App() {
         if (frame.computerId !== computer) return
         if (frame.type === 'directory') setComputers(frame.computers)
         if (frame.type === 'connection') {
+          const recover = viewerReconnected || spacesRef.current[computer]?.connectorOnline === false
+          viewerReconnected = false
           update(computer, s => ({ ...s, connectorOnline: frame.online, ...(!frame.online ? { online: false } : {}) }))
-          if (frame.online) void roster(computer)
+          if (frame.online) void roster(computer).then(() => {
+            if (disposed || !recover) return
+            const current = spacesRef.current[computer]
+            if (!current) return
+            const chat = currentConversation(current, current.agentId)
+            if (chat.runtimeId && !chat.readOnly) void open(computer, current.agentId, chat.sessionId || undefined, true, true)
+          })
         }
         if (frame.type === 'replay.complete') void roster(computer)
         if (frame.type === 'event') {
@@ -259,6 +268,7 @@ function App() {
       socket.onclose = () => {
         flushDeltas()
         if (!disposed) {
+          viewerReconnected = true
           update(computer, s => ({ ...s, online: false }))
           retry = setTimeout(connect, delay)
           delay = Math.min(2000, delay * 1.7)
@@ -710,7 +720,7 @@ function App() {
           </select>
           <div className="connection">
             <i className={space.online ? 'dot live' : 'dot'} />
-            {space.online ? 'Connected to Hermes' : computer ? 'Offline' : 'Connect an Orgo computer'}
+            {space.online ? 'Connected to Hermes' : selected?.recovery?.state==='repairing' ? 'Repairing connection' : selected?.recovery?.state==='reconnecting' ? 'Reconnecting' : selected?.recovery?.state==='repair_needed' ? 'Repair needed' : computer ? 'Offline' : 'Connect an Orgo computer'}
             {!space.online && computer && <button onClick={() => setModal('computers')}>Connect / Repair</button>}
           </div>
         </div>

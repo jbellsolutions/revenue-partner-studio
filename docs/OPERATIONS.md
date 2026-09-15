@@ -51,3 +51,27 @@ For rollback, redeploy the prior known-good gateway artifact against its compati
 First choose whether the owner wants to retain histories/files. Back up the chosen state and stop only this installation’s connector/runtime and optional companion services. Revoke its private pairing tokens/grants. Remove the matching Railway service and volume only after explicit deletion approval; removing the volume destroys its connection records and encryption key. Existing Orgo computers are not deleted by uninstall. Do not remove a shared Hermes home or unrelated runtime. Keep the owner’s original local Hermes installation.
 
 The assistant can inspect exact saved launch-service labels and Supervisor configuration to identify this installation. Do not use broad process-name kills or delete all similarly named directories. Close and remove only the matching product app if the optional Electron client was installed.
+
+## Automatic connector recovery
+
+Previously connected Orgo computers receive separate, lightweight connection checks. After 30 seconds of observed disconnection, Studio diagnoses through the existing Orgo API. It starts only a verified `EXITED` or `FATAL` Studio connector whose runtime is still healthy and whose ownership lock is free. `RUNNING`, `STARTING`, `BACKOFF`, intentional `STOPPED`, paused access, unknown ownership, and unavailable Hermes are preserved. The repair path does not invoke the installer, rotate pairing credentials, restart Hermes, or modify screens.
+
+Each computer has one persisted incident ID. API and SSH attempts share that receipt; uncertain starts are reconciled rather than repeated. The computer-side helper records intent before starting the connector and enforces two starts per ten minutes. The gateway also limits attempts. A repair that cannot be resolved within ten minutes requires review. Reconnection remains independent of browser or Mac availability.
+
+`GET /api/computers` includes optional `recovery` information: state, detail, reachability, connector, Hermes readiness, saved-conversation readiness, last successful check and whether restricted SSH is configured. `POST /api/connections/repair` with `computerId` requests the same bounded checks. `connection.reconcile` reattaches surviving sessions and verifies expired histories in their original profiles; it never submits a prompt. Individual conversations and screens retain their own readiness and errors.
+
+### Optional restricted SSH
+
+SSH is disabled until an installation assistant has verified a real provider endpoint, the computer binding, host fingerprint, and a dedicated restricted key. An SSH daemon or a VNC address does not prove native Orgo SSH reachability. Do not infer endpoints or replace images to obtain support.
+
+Install the reviewed `distribution/recover.py` as `/root/.hermes/studio-cloud/recover.py`, root-owned and not writable by other users. For a dedicated Ed25519 key, the server's authorized-key entry must use `restrict,command="/usr/bin/python3 /root/.hermes/studio-cloud/recover.py"` and the key's public portion. Verify the restriction in the actual SSH server configuration: no shell, PTY, agent forwarding, port forwarding, or user startup scripts. Keep this key separate from interactive Codex access. Confirm the server fingerprint through authenticated Orgo administration, not an unauthenticated scan.
+
+The owner-only `POST /api/connections/ssh` accepts `{computerId, configuration:{host,port,user,privateKey,hostKey}}`. `hostKey` is the verified `ssh-ed25519 BASE64` public host key. The gateway rejects unrestricted shell access and mismatched computer identity before saving configuration with its existing authenticated encryption. Supply configuration through a private authenticated request, never command arguments or a committed file. Native SSH endpoint discovery and remote key provisioning must be completed by the installer before this API is called. Public demos and agent RPCs cannot call it.
+
+Send `{computerId,configuration:null}` or use **Disable SSH recovery** to remove the gateway's saved key immediately. Also remove only that dedicated public key on the computer through authorized administration; if the computer is unreachable, track that remote revocation as pending. Provider authorization denials do not trigger SSH fallback. API timeouts may fall back only to a separately verified SSH configuration using the same request receipt.
+
+Backups require the gateway database plus its connection encryption key and the computer-side recovery receipts. Restore them together so accepted starts retain their identities. To suspend automatic computer-side starts, create the Studio-owned `studio-cloud/recovery-disabled` marker; remove only that marker to re-enable. Older clients and existing connections remain rollback options.
+
+### Client pilot gate
+
+Begin client distribution with one private Studio per recipient, using their own Railway and Orgo accounts and computer/provider credentials. Complete the repaired-version qualification, permitted browser acceptance, backup/restoration check and an independent installation before calling it client-ready. SSH recovery is optional, and unsupported native SSH must not block the normal outbound connector. Shared SaaS tenancy is not part of this release.

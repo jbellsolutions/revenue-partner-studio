@@ -163,9 +163,28 @@ class Connector:
             rows = [dict(r) for r in self.ledger.db.execute('SELECT runtime,agent FROM sessions ORDER BY rowid DESC LIMIT 100')]
             result = await self.rpc('studio.sessions.recover', {'sessions': rows})
             await self.emit('runtime.sessions_recovered', {'count': len(result['recovered'])})
+            return {'rows': rows, 'recovered': result['recovered']}
         except (RuntimeError, TimeoutError, ConnectionError):
             # Only attachments are retried on the next connection, never tasks.
             await self.emit('runtime.recovery_pending', {'message': 'Conversation attachments need reconciliation'})
+        return None
+
+    async def reconcile_connection(self):
+        result = await self.recover_sessions()
+        if result is None:
+            return {'computerId': self.computer, 'reconciled': False}
+        missing = 0
+        for row in result['rows']:
+            if row['runtime'] in result['recovered']: continue
+            saved = self.ledger.session(row['runtime'], row['agent']).get('stored')
+            try:
+                db_path, sid, _ = self.history_source(row['agent'], saved)
+                if not sid: continue  # An empty, expired chat has no history to recover.
+                with contextlib.closing(sqlite3.connect(db_path.as_uri() + '?mode=ro', uri=True)) as db:
+                    if not db.execute('SELECT 1 FROM sessions WHERE id=?', (sid,)).fetchone(): missing += 1
+            except (ValueError, OSError, sqlite3.Error): missing += 1
+        return {'computerId': self.computer, 'reconciled': missing == 0,
+                'recovered': len(result['recovered']), 'needsReview': missing}
 
     async def hermes_loop(self):
         while True:
@@ -325,6 +344,8 @@ class Connector:
             if method=='library.export':
                 async with self.upload_lock:return await asyncio.to_thread(library.export,p['targetComputerId'],p['profiles'],request_id,p.get('selection'))
             raise ValueError('Unknown Hermes library operation')
+        if method == 'connection.reconcile':
+            return await self.reconcile_connection()
         if method in {'status', 'connection.status'}:
             capabilities = {}
             error = ''
@@ -342,6 +363,7 @@ class Connector:
             self.capabilities['screens'] = bool(self.config.get('screenControl') or self.local_screen)
             self.capabilities['localDesktop'] = bool(self.local_screen)
             self.capabilities.update({'explorer':True,'library':True})
+            self.capabilities['connectionRecovery'] = True
             connected = self.ready.is_set() and not error
             self.capabilities['chat'] = connected
             self.capabilities['screenDiagnostics'] = bool(self.config.get('screenControl'))
@@ -350,7 +372,7 @@ class Connector:
                     'epoch': self.runtime_epoch, 'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
                     'state': 'ready' if connected else 'hermes_unavailable', 'message': error,
                     'runtimeVersion': capabilities.get('extensionVersion', 'legacy'),
-                    'connectorVersion': 'screens-recovery-2', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
+                    'connectorVersion': 'connector-recovery-1', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
         if method=='import.preview':
             from .cloud_library import Library
             if p.get('bundle'):return await asyncio.to_thread(Library(self.home).preview,self.computer,p['bundle'])

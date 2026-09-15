@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Store, hash } from './store.ts'
 import { ControlStore } from './control-store.ts'
 import { Computers } from './computers.ts'
+import { Recovery } from './recovery.ts'
 import { Transfers } from './transfers.ts'
 import {localSetup,localDownload} from './local-setup.ts'
 import { publicWebsite, type PublicWebsiteOptions } from './public-website.ts'
@@ -32,7 +33,7 @@ type Pending = {
 type Viewer = { id: string; socket: WebSocket; computer: string; cursor: number; replaying: boolean; buffer: any[] }
 type Client = WebSocket & { alive?: boolean; sessionToken?: string }
 const METHODS = new Set([
-  'connection.status', 'screen.status', 'screen.repair', 'screen.capacity', 'profile.settings.get', 'profile.settings.update',
+  'connection.status', 'connection.reconcile', 'screen.status', 'screen.repair', 'screen.capacity', 'profile.settings.get', 'profile.settings.update',
   'models.options', 'models.select', 'models.status', 'skills.update', 'endpoints.configure', 'endpoints.list',
   'explorer.roots','explorer.add','explorer.list','explorer.read','explorer.folders','explorer.choose','library.profiles',
   'status',
@@ -128,7 +129,8 @@ export function createGateway(options: Options) {
         } else send(v.socket, value)
       }
   }
-  const directory=()=>control.computers().map((c:any)=>({...c,online:connectors.has(c.id)}))
+  let recovery: Recovery | undefined
+  const directory=()=>control.computers().map((c:any)=>({...c,online:connectors.has(c.id),recovery:c.kind==='orgo'?recovery?.status(c.id):undefined}))
   const publishDirectory=()=>{for(const v of viewers)send(v.socket,{type:'directory',computerId:v.computer,computers:directory()})}
   const publishPermissions=()=>{for(const [id,ws] of connectors)send(ws,{type:'permissions',computerId:id,proof:control.permissions(id)})}
   const computers=new Computers(control,origin,options.setupDir||path.resolve('dist/setup'),id=>connectors.has(id),publishDirectory)
@@ -156,6 +158,8 @@ export function createGateway(options: Options) {
     })
   }
   const transfers=new Transfers(control,rpc)
+  recovery=new Recovery(control,computers,id=>connectors.has(id),rpc,publishDirectory)
+  recovery.start()
   const json = (res: ServerResponse, status: number, data: unknown) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
     res.end(JSON.stringify(data))
@@ -233,6 +237,17 @@ export function createGateway(options: Options) {
         if(url.pathname==='/api/orgo'&&req.method==='GET')return json(res,200,computers.state())
         if(url.pathname==='/api/orgo'&&req.method==='POST')return json(res,200,await computers.saveKey((await body(req)).key))
         if(url.pathname==='/api/orgo/refresh'&&req.method==='POST'){await computers.refresh();return json(res,200,computers.state())}
+        if(url.pathname==='/api/connections/repair'&&req.method==='POST') {
+          const id=String((await body(req)).computerId||'')
+          if(!(control.computers() as any[]).some(c=>c.id===id&&c.kind==='orgo'))return json(res,400,{error:'Choose a saved Orgo computer.'})
+          void recovery!.check(id,true)
+          return json(res,202,recovery!.status(id))
+        }
+        if(url.pathname==='/api/connections/ssh'&&req.method==='POST') {
+          const b=await body(req)
+          await recovery!.configureSsh(String(b.computerId||''),b.configuration??null)
+          return json(res,200,recovery!.status(b.computerId))
+        }
         if(url.pathname==='/api/connections/install'&&req.method==='POST')return json(res,202,await computers.connect(String((await body(req)).computerId||'')))
         if(url.pathname==='/api/connections/local'&&req.method==='POST') {
           const b=await body(req)
@@ -557,7 +572,9 @@ export function createGateway(options: Options) {
     connectors,
     control,
     computers,
+    recovery,
     close: async () => {
+      const recovering = recovery?.close()
       computers.close()
       transfers.close()
       clearInterval(heartbeat)
@@ -568,6 +585,7 @@ export function createGateway(options: Options) {
       pending.clear()
       for (const ws of wss.clients) ws.terminate()
       await Promise.all([
+        recovering,
         new Promise<void>(resolve => wss.close(() => resolve())),
         new Promise<void>(resolve => server.close(() => resolve()))
       ])

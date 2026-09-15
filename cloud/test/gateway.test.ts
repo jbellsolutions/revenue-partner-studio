@@ -243,3 +243,19 @@ test('custom app origin and previous origin work without trusting public site or
   const viewer = await f.ws('/api/events?computerId=' + A, { Origin: app, Cookie: f.cookie })
   viewer.socket.close()
 })
+
+test('repair is owner-only, computer scoped, separate from installation, and excludes Mac recovery',async t=>{
+  const f=await fixture(t);const checked:string[]=[];let installs=0
+  f.gateway.recovery!.check=async id=>{checked.push(id)}
+  f.gateway.computers.connect=async()=>{installs++;return {state:'connected'}}
+  assert.equal((await f.post('/api/connections/repair',{computerId:A},{Cookie:''})).status,401)
+  assert.equal((await f.post('/api/connections/repair',{computerId:A},{Origin:'https://untrusted.test'})).status,403)
+  assert.equal((await f.post('/api/connections/repair',{computerId:A})).status,202)
+  assert.deepEqual(checked,[A]);assert.equal(installs,0)
+  assert.equal((await f.post('/api/connections/repair',{computerId:'missing'})).status,400)
+  f.store.db.prepare("UPDATE computers SET kind='local' WHERE id=?").run(B)
+  assert.equal((await f.post('/api/connections/repair',{computerId:B})).status,400)
+  assert.equal((await f.post('/api/connections/ssh',{computerId:A,configuration:null},{Cookie:''})).status,401)
+  assert.equal((await f.post('/api/connections/ssh',{computerId:A,configuration:null},{Origin:'https://untrusted.test'})).status,403)
+  assert.equal((await f.post('/api/connections/ssh',{computerId:A,configuration:null})).status,200)
+})

@@ -21,6 +21,7 @@ COPY . /app/source
 RUN node /app/source/distribution/package-runtime.mjs /app/source /app/cloud/dist/setup
 
 FROM node:22.22.3-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production PORT=8788 STUDIO_DATA_DIR=/data
 WORKDIR /app
 COPY --from=build /app/cloud/dist ./dist
