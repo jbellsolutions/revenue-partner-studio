@@ -381,7 +381,9 @@ export function createGateway(options: Options) {
         const previous = connectors.get(computer)
         if (previous) {
           // A client may detect a broken connection before its gateway socket
-          // closes. Wait for that owner to leave; never evict a live owner.
+          // closes. Cover its six-second outstanding-ping grace while staying
+          // within the connector's eight-second handshake budget. A healthy
+          // owner is never evicted and admission never restarts or replays work.
           await new Promise<void>(resolve => {
             const finished = () => {
               clearTimeout(timer)
@@ -389,7 +391,7 @@ export function createGateway(options: Options) {
               ws.off('close', finished)
               resolve()
             }
-            const timer = setTimeout(finished, 3000)
+            const timer = setTimeout(finished, 7000)
             previous.once('close', finished)
             ws.once('close', finished)
             if (previous.readyState === WebSocket.CLOSED || ws.readyState !== WebSocket.OPEN) finished()

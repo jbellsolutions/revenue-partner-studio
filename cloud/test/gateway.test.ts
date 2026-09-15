@@ -185,6 +185,23 @@ test('a delayed heartbeat reply preserves its authenticated connector and pendin
   client.socket.send(JSON.stringify({ type: 'response', computerId: A, id: request.id, result: { computerId: A } }))
   assert.deepEqual(await result, { value: { computerId: A } })
 })
+test('a returning connector waits for a silent owner heartbeat deadline without replaying work', { timeout: 12000 }, async t => {
+  const f = await fixture(t)
+  const first = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token }, { autoPong: false })
+  await once(first.socket, 'ping')
+  const interrupted = assert.rejects(f.gateway.rpc(A, 'chat.send', { agentId: 'default', text: 'accepted once' }, 'silent-owner-task'), /Connection interrupted/)
+  await until(() => first.messages.some(m => m.type === 'request'))
+  await new Promise(r => setTimeout(r, 1000))
+  const started = performance.now()
+  const returning = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token })
+  await once(first.socket, 'close')
+  await interrupted
+  await until(() => returning.messages.some(m => m.type === 'hello'))
+  assert.ok(performance.now() - started < 8000, 'Admission finishes within the existing connector handshake budget')
+  assert.equal(returning.socket.readyState, WebSocket.OPEN)
+  assert.equal(f.gateway.connectors.size, 1)
+  assert.equal(returning.messages.some(m => m.type === 'request' && m.requestId === 'silent-owner-task'), false)
+})
 test('gateway heartbeat diagnostics identify the closer without recording private frames', { timeout: 12000 }, async t => {
   const reports: any[] = []
   t.mock.method(console, 'info', (value: string) => reports.push(JSON.parse(value)))
