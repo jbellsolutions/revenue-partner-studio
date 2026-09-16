@@ -257,9 +257,10 @@ def _verified_chrome_group(info: dict, value: dict, proc_root=Path('/proc')) -> 
         executable = Path(os.readlink(proc_root / str(owner) / 'exe')).name
         if executable not in {'chrome', 'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'}:
             return None
-        environment = (proc_root / str(owner) / 'environ').read_bytes().split(b'\0')
-        if ('DISPLAY=' + info['display']).encode() not in environment:
-            return None
+        # Chrome rewrites argv to a one-field process title and some builds do
+        # not retain DISPLAY in /proc/<pid>/environ. The immutable launcher
+        # start time plus its exact process group, Chrome executable and the
+        # assigned CDP listener bind this process to the saved record.
         return {'pid': leader, 'start': start}
     except (KeyError, OSError, TypeError, ValueError):
         return None

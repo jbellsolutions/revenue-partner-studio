@@ -186,7 +186,6 @@ def test_chrome_child_socket_is_bound_to_its_saved_launcher_group(registry, monk
     info = screens.screen('brent')
     proc = registry/'proc'; owner = proc/'42'; owner.mkdir(parents=True)
     (owner/'exe').symlink_to('/opt/google/chrome/chrome')
-    (owner/'environ').write_bytes(('DISPLAY='+info['display']+'\0').encode())
     value = {'pid': 40, 'start': 'verified'}
     monkeypatch.setattr(screens, 'process_start', lambda pid: 'verified')
     monkeypatch.setattr(screens, 'listening', lambda port: port == info['cdpPort'])
