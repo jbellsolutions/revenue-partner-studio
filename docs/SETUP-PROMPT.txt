@@ -1,4 +1,4 @@
-Install Revenue Partner Studio by Your AI Guy from https://github.com/jbellsolutions/revenue-partner-studio using the v0.2.0-beta.3 release.
+Install Revenue Partner Studio by Your AI Guy from https://github.com/jbellsolutions/revenue-partner-studio using the v0.2.0-beta.4 release.
 
 Read AGENTS.md and INSTALL.md first. Work in a new independent folder. Do the technical setup, starting with the setup driver's preflight. Check my accounts and show the hosting, Orgo computer and model costs before enabling anything paid. Use my accounts and explicitly selected existing Orgo Linux computer; never use the publisher's computers, keys or data.
 

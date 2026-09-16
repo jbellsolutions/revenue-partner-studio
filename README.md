@@ -15,7 +15,7 @@ Give your coding assistant this repository URL and the request below. It perform
 
 ```text
 Install Revenue Partner Studio by Your AI Guy from
-https://github.com/jbellsolutions/revenue-partner-studio at v0.2.0-beta.3.
+https://github.com/jbellsolutions/revenue-partner-studio at v0.2.0-beta.4.
 Read AGENTS.md and INSTALL.md. Use an independent folder, check prerequisites
 and accounts, explain costs, deploy my private Railway workspace, connect my
 selected Orgo Linux computer, configure my selected model provider, and verify
@@ -51,7 +51,7 @@ The Orgo link is an affiliate link; no particular discount is promised. As check
 
 ## Release status
 
-**v0.2.0-beta.3** is a private-client pilot, not a shared multi-tenant SaaS. Screen scheduling, durable queueing, connector reattachment, guided setup, backup and guarded update paths have automated acceptance evidence. An independent recipient installation, live four-screen browser acceptance and the clean 24-hour qualification remain release gates, so this beta is not yet an unconditional client-ready claim. Mac chat and approved files are supported; Mac desktop control is hidden. There is no notarized public Mac binary in this release. Runtime entitlement depends on the selected provider.
+**v0.2.0-beta.4** is a private-client pilot, not a shared multi-tenant SaaS. The GTM canary opened four real specialist browser workspaces on distinct screens, queued a fifth, released every viewer lease and reacquired a fresh screen identity. All four existing Orgo computers then passed guarded update, Hermes readiness and specialist-screen checks. An independent recipient installation, administrator-permitted visual/takeover acceptance and the clean 24-hour qualification remain release gates, so this beta is not yet an unconditional client-ready claim. Mac chat and approved files are supported; Mac desktop control is hidden. There is no notarized public Mac binary in this release. Runtime entitlement depends on the selected provider.
 
 The public site is live at [revenuepartnerstudio.com](https://revenuepartnerstudio.com), and the private workspace uses its separate application host. The installation instructions and preparation files are also available directly in this repository.
 
@@ -82,4 +82,4 @@ Use Node 22.22 or newer (Node 24 recommended). For runtime changes use `scripts/
 
 MIT, including the original Nous Research copyright. Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent), descended from AI Guy’s Orgo integration, with a Studio interface inspired by agent desktop workflows. See [NOTICE.md](NOTICE.md) and [PROVENANCE.md](PROVENANCE.md). This project is independent of the referenced vendors and does not include proprietary Grok code.
 
-Read [what changed in round two](docs/ROUND-TWO.md) for the chat model menu and selected-skill imports. Existing computer extensions need the guarded beta.3 update before screen sessions and selected-skill transfers become available.
+Read [what changed in round two](docs/ROUND-TWO.md) for the chat model menu and selected-skill imports. Existing computer extensions need the guarded beta.4 update before screen sessions and selected-skill transfers become available.

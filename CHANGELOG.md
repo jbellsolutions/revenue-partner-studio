@@ -1,3 +1,12 @@
+## Revenue Partner Studio v0.2.0-beta.4
+
+- Migrates verified legacy connectors without weakening computer, process or runtime ownership checks.
+- Uses four prewarmed physical specialist slots while retaining each agent’s private browser profile, cookies, files and working directory.
+- Reclaims expired viewer-only assignments, preserves active task and human-control leases, and queues a fifth visible agent.
+- Recognizes Chrome’s verified process-title handoff and migrates exact prewarmed display/viewer ownership records across profile assignments.
+- Live GTM acceptance opened four distinct specialist screens, queued a fifth, released all viewer leases and reacquired a fresh screen identity. The other three Orgo computers passed sequential guarded updates and specialist-screen checks.
+- The public installer remains a private-client pilot pending an independent recipient installation, administrator-permitted visual/takeover acceptance and a clean 24-hour qualification.
+
 ## Revenue Partner Studio v0.2.0-beta.3
 
 - Four prewarmed physical screen slots with temporary viewer leases, durable task and takeover ownership, persistent per-agent browser profiles and stale-session protection.

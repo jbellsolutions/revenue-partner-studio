@@ -1,6 +1,6 @@
 {
   "name": "revenue-partner-studio",
-  "version": "0.2.0-beta.3",
+  "version": "0.2.0-beta.4",
   "description": "Revenue Partner Studio by Your AI Guy \u2014 a private browser workspace for Hermes agents on your computers.",
   "private": true,
   "workspaces": [

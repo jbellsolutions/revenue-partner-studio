@@ -2,6 +2,23 @@
 
 This document separates implemented behavior, automated coverage and live acceptance. The public demo is simulated; no demo action proves a model or computer connection.
 
+## v0.2.0-beta.4 canary-accepted private-client pilot
+
+Beta.4 contains the immutable follow-up to the beta.3 public tag after live canary testing exposed three legacy migration boundaries. The updater now derives an older installation’s interpreter from its exact supervised connector before the full runtime ownership check. Specialist Chrome verification accepts Chrome’s verified one-field process title only when the saved Linux start time, process group, Chrome executable and assigned debugging listener all match. Prewarmed Xvnc and viewer services migrate from older profile-scoped records into physical slot records only after exact display, port and process verification.
+
+Live GTM acceptance on September 16, 2026 opened four simultaneous specialist workspaces on displays `:100` through `:103`; each returned a distinct screen/session identity and reached ready state. A fifth specialist queued at position one. All four viewer leases released, and the first profile reacquired a fresh screen identity. The guarded updater created private backups, preserved Hermes data and restored readiness. The AI Co-founder, Content Marketer and Revenue Partner computers were then promoted sequentially; each restored its real agent inventory, opened a specialist screen and released it cleanly. All four Orgo computers remained connected.
+
+Focused final coverage passed 147 affected runtime tests, 67 cloud tests, 11 setup/configuration tests and five public-site tests. Hosted verification for the final slot-migration commit passed both jobs. Railway health checks and the public/private domains remained healthy. Earlier failures and mixed-version reliability evidence remain preserved.
+
+| Beta.4 gate | Current status |
+| --- | --- |
+| Four live specialist allocations and fifth-agent queue | **Passed on the GTM canary.** This proves real allocation, identity, readiness, release and queue behavior; it does not substitute for administrator-permitted pixel/input review. |
+| Existing Orgo fleet promotion | **Passed.** Four computers used guarded one-at-a-time updates with readiness and specialist-screen checks. |
+| Independent recipient installation | **Pending.** Must use independently authorized Railway, Orgo and provider accounts and pass real chat/tool/screen/reopen checks. |
+| Visual takeover and cross-screen input acceptance | **Pending under the existing browser-policy restriction.** No bypass was used. |
+| Performance p95 and clean 24-hour qualification | **Pending on this final revision.** Prior windows remain historical evidence. |
+| Client-ready claim | **Private-client pilot only** until the remaining gates pass. |
+
 ## v0.2.0-beta.3 private-client pilot
 
 The beta.3 candidate replaces permanent agent-to-display bindings with four prewarmed physical slots and private per-agent browser workspaces. Viewer-only switches release immediately, active task and human-control leases remain protected, a fifth visible task waits durably, and ordinary public research can use only the local headless browser. Screen tickets carry explicit session and screen identities, so a connector restart cannot attach a viewer to a stale reassignment. Chat remains independent of screen relay failures.
