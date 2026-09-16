@@ -85,7 +85,7 @@ def verify_runtime(cfg):
                     message = json.loads(ws.recv(timeout=max(.01, response_deadline-time.monotonic())))
                     if message.get('id') != request: continue
                     result = message.get('result', {})
-                    if result.get('sessionRecovery') and result.get('profileSettings') and result.get('historySearch') and result.get('extensionVersion') == 'history-recovery-3': return
+                    if result.get('sessionRecovery') and result.get('profileSettings') and result.get('historySearch') and result.get('extensionVersion') == 'history-recovery-4': return
                     raise RuntimeError('The installed extension did not report the required capabilities')
         except Exception as exc:
             last_error = type(exc).__name__
@@ -136,7 +136,7 @@ def update(configuration, source, apply=False, setup_job=None):
     task_store = home/('studio/workspace.sqlite3' if kind == 'local' else 'studio-cloud/runtime/workspace.sqlite3')
     queued = pending(task_store)
     result = {'computerId': cfg['computerId'], 'files': len(files), 'pendingTasks': queued,
-              'ready': queued == 0, 'revision': 'history-recovery-3'}
+              'ready': queued == 0, 'revision': 'history-recovery-4'}
     if not apply: return result
     if queued: raise RuntimeError('Studio has accepted work. Wait for it to finish before updating')
     os.umask(0o077)

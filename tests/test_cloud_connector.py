@@ -283,6 +283,8 @@ def test_history_search_reaches_old_conversations_and_every_profile(tmp_path):
         sid = f'default-{index:03d}'
         default.create_session(sid, 'desktop')
         default.append_message(sid, 'user', 'quarterly plan' if index == 0 else f'routine {index}')
+        if index == 1:
+            default.set_session_title(sid, 'Launch brief from title')
     default.close()
     other = c.home / 'profiles' / 'revenue'; other.mkdir(parents=True)
     (other / 'config.yaml').write_text('model: test\n')
@@ -295,6 +297,7 @@ def test_history_search_reaches_old_conversations_and_every_profile(tmp_path):
     assert all(row['ref']['computerId'] == c.computer for row in result['results'])
     assert c.history_catalog.search({'query': 'quarterly plan', 'sources': ['slack']})['results'][0]['profileId'] == 'revenue'
     assert c.history_catalog.search({'query': 'quarterly plan', 'profiles': ['default']})['results'][0]['sessionId'] == 'default-000'
+    assert c.history_catalog.search({'query': 'launch brief'})['results'][0]['sessionId'] == 'default-001'
 
     from studio.cloud_history import search_profile
     own = search_profile(c.home, c.computer, 'revenue', 'quarterly plan')

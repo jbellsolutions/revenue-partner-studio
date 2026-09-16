@@ -28,7 +28,7 @@ export function LocalSetup({computers,select}:{computers:any[];select:(id:string
     {!id&&<label>Computer name<input value={name} onChange={e=>setName(e.target.value)}/></label>}
     <p className="small-note">The companion makes private backups and installs beside Hermes. This Mac must stay awake and connected for remote work. You can stop Studio access from its ✳ menu.</p>
     {!setup&&id&&<div className="connection-card"><strong>{health?.runtimeConnected?'Hermes is responding':'Hermes needs attention'}</strong>
-      <p>{['screens-recovery-2','history-recovery-3'].includes(health?.runtimeVersion)?'The compatible extension is connected. Repair can restore the saved connection if conversation recovery fails.':'Install the compatible companion to enable conversation recovery and selected-skill transfers.'}</p>
+      <p>{['screens-recovery-2','history-recovery-3','history-recovery-4'].includes(health?.runtimeVersion)?'The compatible extension is connected. Repair can restore the saved connection if conversation recovery fails.':'Install the compatible companion to enable conversation recovery and selected-skill transfers.'}</p>
       <p className="small-note">A profile import is a copy. This saved Mac connection uses the original Hermes on your computer.</p>
     </div>}
     {!setup?<button className="primary" disabled={busy} onClick={()=>void prepare()}>{busy?'Preparing…':id?'Repair local Hermes':'Prepare Mac connection'}</button>:setup.connected?<div className="connection-card"><strong>Your Mac is connected</strong><p>Open it to chat, or return to Import from Hermes to review a transfer.</p><button className="primary" onClick={()=>select(setup.computerId)}>Open local Hermes</button></div>:<div className="connection-card">

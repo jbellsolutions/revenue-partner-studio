@@ -216,7 +216,84 @@ class HistoryCatalog:
                     f"ORDER BY s.{last} DESC LIMIT ?", (limit,)).fetchall()
             return [dict(row) for row in rows]
 
+    def _direct_rows(self, store, query, limit=250):
+        """Read modern Hermes history without building per-session aggregates.
+
+        SessionDB's rich listing performs useful accounting work for its native
+        UI, but that becomes unnecessarily expensive on long-running profiles.
+        Studio only needs lightweight discovery metadata here.  Full messages
+        remain loaded on demand when the owner opens an exact result.
+        """
+        path = store["path"]
+        with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+            db.row_factory = sqlite3.Row
+            tables = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
+            if not {"sessions", "messages"}.issubset(tables):
+                raise sqlite3.DatabaseError("conversation tables unavailable")
+            session_cols, message_cols = _columns(db, "sessions"), _columns(db, "messages")
+            title = "s.title" if "title" in session_cols else "s.id"
+            source = "s.source" if "source" in session_cols else "''"
+            started = "s.started_at" if "started_at" in session_cols else "s.rowid"
+            last = ("s.last_activity_at" if "last_activity_at" in session_cols else
+                "s.last_active" if "last_active" in session_cols else started)
+            description = "s.last_activity_description" if "last_activity_description" in session_cols else "''"
+            select = (f"SELECT s.id,{title} AS title,{source} AS source,{started} AS started_at,"
+                f"{last} AS last_active,{description} AS preview FROM sessions s")
+            if not query:
+                return [dict(row) for row in db.execute(
+                    select + f" ORDER BY {last} DESC LIMIT ?", (limit,)).fetchall()]
+
+            ordered, preview = [], {}
+            if "messages_fts" in tables and "id" in message_cols:
+                terms = re.findall(r"\w+", query, flags=re.UNICODE)[:20]
+                if terms:
+                    match = " AND ".join('"' + term + '"*' for term in terms)
+                    hits = db.execute(
+                        "SELECT m.session_id,max(m.id) AS message_id FROM messages_fts "
+                        "JOIN messages m ON m.id=messages_fts.rowid "
+                        "WHERE messages_fts MATCH ? GROUP BY m.session_id "
+                        "ORDER BY max(m.id) DESC LIMIT ?", (match, limit)).fetchall()
+                    message_ids = [row["message_id"] for row in hits]
+                    if message_ids:
+                        values = db.execute("SELECT id,substr(CAST(content AS TEXT),1,1000) AS content "
+                            "FROM messages WHERE id IN (" + ",".join("?" for _ in message_ids) + ")",
+                            message_ids).fetchall()
+                        contents = {row["id"]: row["content"] for row in values}
+                    else:
+                        contents = {}
+                    for row in hits:
+                        sid = str(row["session_id"] or "")
+                        if sid and sid not in preview:
+                            ordered.append(sid); preview[sid] = contents.get(row["message_id"], "")
+            else:
+                return self._fallback_rows(store, query, limit)
+
+            if "title" in session_cols:
+                escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                for row in db.execute(
+                        f"SELECT s.id FROM sessions s WHERE lower(CAST(s.title AS TEXT)) LIKE ? ESCAPE '\\' "
+                        f"ORDER BY {last} DESC LIMIT ?", ("%" + escaped + "%", limit)).fetchall():
+                    sid = str(row["id"] or "")
+                    if sid and sid not in preview:
+                        ordered.append(sid); preview[sid] = ""
+            ordered = ordered[:limit]
+            if not ordered:
+                return []
+            rows = db.execute(select + " WHERE s.id IN (" + ",".join("?" for _ in ordered) + ")", ordered).fetchall()
+            metadata = {str(row["id"]): dict(row) for row in rows}
+            result = []
+            for sid in ordered:
+                if sid in metadata:
+                    metadata[sid]["preview"] = preview.get(sid) or metadata[sid].get("preview") or ""
+                    result.append(metadata[sid])
+            return result
+
     def _native_rows(self, store, query):
+        try:
+            return self._direct_rows(store, query)
+        except (OSError, sqlite3.Error, ValueError):
+            pass
         try:
             from hermes_state import SessionDB
             native = SessionDB(db_path=store["path"], read_only=True)
