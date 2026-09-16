@@ -814,6 +814,15 @@ def _resolve_cloud_provider_uncached() -> Optional[CloudBrowserProvider]:
     """
     global _cached_cloud_provider, _cloud_provider_resolved
 
+    # Revenue Partner Studio uses this path only for local, headless overflow.
+    # Never let an ambient Browser Use/Browserbase credential silently turn an
+    # ordinary research task into paid cloud browser usage.
+    if (os.environ.get('HERMES_STUDIO_RUNTIME') == '1'
+            and os.environ.get('BROWSER_BACKEND') == 'local'):
+        _cached_cloud_provider = None
+        _cloud_provider_resolved = True
+        return None
+
     resolved: Optional[CloudBrowserProvider] = None
     try:
         from hermes_cli.config import read_raw_config

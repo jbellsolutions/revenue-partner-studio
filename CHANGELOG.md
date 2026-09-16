@@ -1,4 +1,12 @@
-## Unreleased — screen and local recovery
+## Revenue Partner Studio v0.2.0-beta.3
+
+- Four prewarmed physical screen slots with temporary viewer leases, durable task and takeover ownership, persistent per-agent browser profiles and stale-session protection.
+- One-request screen allocation returns an explicit screen session, screen identity, mode, capacity, queue position and retry timing; connector restarts reattach by that identity.
+- Safe release preserves each agent’s cookies, files and browser workspace while viewer-only switches free capacity immediately. Conversation events show screen assignment, waiting, live, headless, release and failure states.
+- Ordinary public web research can use the computer’s local headless browser when visible interaction is unnecessary. Login, upload, desktop, live-view and takeover work always waits for a managed screen; Studio never auto-selects a paid browser service.
+- Guided, resumable client installation with destination-scoped provider setup, real tool/screen verification, consistent gateway backup, sanitized support packages and guarded one-computer updates with extension rollback.
+- Registry-based upstream monitoring for official Hermes and Orgo changes, private compatibility references and pinned browser integrations. Changes are classified and reviewed; nothing is merged automatically.
+- Automated acceptance covers ten durable tasks with four running and six queued, four distinct screen assignments plus a waiting fifth, preserved browser workspaces, idempotent release, connector reattachment and deduplicated updates.
 
 - Computer-wide conversation search across every Hermes profile, preserved import and recognized older Studio/Hermes store, with source/date/profile filters and exact resume links.
 - Explicit legacy-conversation recovery copies only the selected conversation into its owning native profile, preserves provenance and conflicts, and leaves the older database unchanged.
@@ -10,7 +18,7 @@
 - Recent local and cross-computer handoffs with recipient links, acknowledgment, results and permission/error status.
 - Guarded extension updates with verified backups, readiness checks and source rollback. Mac service scheduling supports interactive requests; native Hermes and credentials remain intact.
 - In-place specialist screen ownership repair and verified legacy Orgo update paths. Mac repair downloads remain available while the existing connector is online.
-- These changes do not establish live GTM screen acceptance or the new 24-hour qualification. See docs/RELEASE-CHECKS.md.
+- This private-client pilot does not establish independent recipient installation, live four-screen browser acceptance or the clean 24-hour qualification. See docs/RELEASE-CHECKS.md.
 
 ## Revenue Partner Studio v0.2.0-beta.2
 

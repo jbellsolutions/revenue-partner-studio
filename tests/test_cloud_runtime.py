@@ -52,3 +52,20 @@ def test_explicit_managed_screen_grant_keeps_generic_browser_and_other_tools_dis
     assert 'orgo-screen' in enabled and {'browser','terminal','file','computer_use'}.issubset(disabled)
     cfg['agent']['disabled_toolsets'].append('orgo-screen')
     assert mcp_servers(cfg,{})=={}
+
+
+def test_orgo_overflow_enables_only_the_forced_local_headless_browser(monkeypatch,tmp_path):
+    import hermes_constants
+    from studio import service,cloud_runtime
+    monkeypatch.setenv('HERMES_STUDIO_RUNTIME','1')
+    monkeypatch.setenv('BROWSER_BACKEND','local')
+    monkeypatch.setattr(cloud_runtime.sys,'platform','linux')
+    monkeypatch.setattr(hermes_constants,'get_hermes_home',lambda:tmp_path/'profiles'/'research')
+    monkeypatch.setattr(service,'screen_config',lambda profile:{'profile':profile})
+    cfg={'toolsets':['hermes-cli']}
+    enabled,disabled=tool_selection(cfg,['hermes-cli'])
+    assert {'browser','orgo-screen'}.issubset(enabled)
+    assert 'browser' not in disabled
+    monkeypatch.setenv('BROWSER_BACKEND','browser-use')
+    enabled,disabled=tool_selection(cfg,['hermes-cli'])
+    assert 'browser' in disabled and 'orgo-screen' in enabled

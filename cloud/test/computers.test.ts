@@ -75,3 +75,16 @@ test('permanent setup authorization failures need action; temporary failures kee
   assert.equal(control.job('setup').state,'installing')
   assert.equal(control.job('setup').private.pair,'same-pair')
 })
+test('computer updates are deduplicated and carry only a short-lived artifact receipt',async t=>{
+  const {store,control}=fixture(t);store.addComputer(A,'Revenue Partner');control.set('orgo.key','test-key')
+  const fs=await import('node:fs'),os=await import('node:os'),path=await import('node:path')
+  const assets=fs.mkdtempSync(path.join(os.tmpdir(),'rps-update-assets-'));t.after(()=>fs.rmSync(assets,{recursive:true,force:true}))
+  fs.writeFileSync(path.join(assets,'runtime.tar.gz'),'archive');fs.writeFileSync(path.join(assets,'runtime.sha256'),'a'.repeat(64));fs.writeFileSync(path.join(assets,'update-remote.py'),'pass\n')
+  const fetcher=async(url:string)=>new Response(JSON.stringify(url.includes('/computers/')?{id:A,os:'linux',status:'running'}:{}))
+  const service=new Computers(control,'https://studio.test',assets,()=>true,()=>{},fetcher as any)
+  const started:string[]=[];(service as any).run=async(id:string)=>{started.push(id)}
+  const first=await service.update(A),second=await service.update(A)
+  assert.equal(first.id,second.id);assert.deepEqual(started,[first.id])
+  const saved=control.job(first.id).private
+  assert.equal(saved.kind,'update');assert.equal(JSON.stringify(saved).includes('test-key'),false)
+})

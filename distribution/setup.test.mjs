@@ -113,6 +113,8 @@ test('real-task verification reconciles an accepted task after lost acknowledgme
       throw Error('acknowledgment lost')
     }
     if (body.method === 'tasks.evidence') return { toolStarts: 1, toolResults: 1 }
+    if (body.method === 'screen.open') return { screenSessionId: 'a'.repeat(32), screenId: 'screen-one' }
+    if (['screen.pause','screen.resume','screen.release'].includes(body.method)) return { paused: body.method === 'screen.pause', released: body.method === 'screen.release' }
   }
   assert.equal((await f.setup.verify()).chatAndTool, 'not_run')
   await assert.rejects(f.setup.verify(true), /acknowledgment lost/)
@@ -120,7 +122,7 @@ test('real-task verification reconciles an accepted task after lost acknowledgme
   assert.equal(result.chatAndTool, 'passed')
   assert.equal(sends, 1)
   assert.equal(sessions, 1)
-  assert.equal(result.screenTakeover, 'requires_browser_acceptance')
+  assert.equal(result.screenTakeover, 'backend_passed_browser_frame_pending')
 })
 test('a completed answer without tool evidence never passes installation', async t => {
   const f = fixture(t)
@@ -139,4 +141,47 @@ test('a completed answer without tool evidence never passes installation', async
             : { toolStarts: 0, toolResults: 0 }
   assert.equal((await f.setup.verify()).chatAndTool, 'failed_evidence')
   assert.equal(f.setup.state.steps.realTool, false)
+})
+test('provider keys require destination approval and are never written to setup state', async t => {
+  const f = fixture(t)
+  await f.setup.install(binding, true)
+  f.io.session = async () => async (_route, body) =>
+    body.method === 'providers.check' ? { status: 'verified', message: 'verified' } : { saved: true }
+  await assert.rejects(f.setup.provider('openrouter', 'private-provider-key'), /Approve transfer/)
+  const result = await f.setup.provider('openrouter', 'private-provider-key', true)
+  assert.equal(result.status, 'verified')
+  assert.equal(readFileSync(join(f.dir, 'state.json'), 'utf8').includes('private-provider-key'), false)
+})
+test('guided mode is resumable and support bundle contains only sanitized results', async t => {
+  const f = fixture(t)
+  assert.equal((await f.setup.guided()).stage, 'destination_required')
+  await f.setup.install(binding, true)
+  f.setup.state.steps.connected = true
+  f.setup.state.lastVerification = { connection: 'passed', chatAndTool: 'passed' }
+  f.setup.save()
+  const support = f.setup.supportBundle()
+  const report = readFileSync(support.report, 'utf8')
+  assert.match(report, /"chatAndTool": "passed"/)
+  assert.equal(report.includes(binding.computerId), false)
+  assert.equal(statSync(support.bundle).mode & 0o777, 0o600)
+})
+test('update downloads one private backup, deploys once, and reconciles one guarded computer job', async t => {
+  const f=fixture(t);await f.setup.install(binding,true)
+  let deployed=0,visible=false
+  f.io.findUpdateDeployment=async()=>visible?{id:'deployment',status:'SUCCESS'}:null
+  f.io.deployUpdate=async()=>{deployed++;visible=true}
+  const api=async(route,body)=>{
+    if(route==='/api/connections/update')return {id:'update-job',state:'updating'}
+    if(route==='/api/orgo')return {jobs:[{id:'update-job',state:'updated'}]}
+    if(route==='/api/computers')return {computers:[{id:binding.computerId,online:true}]}
+    if(body?.method==='status')return {runtimeConnected:true}
+    if(body?.method==='agents.list')return {agents:[{id:'default'}]}
+    return {deliveries:[]}
+  }
+  api.download=async()=>Buffer.concat([Buffer.from('PK'),Buffer.alloc(200,1)])
+  f.io.session=async()=>api
+  const result=await f.setup.update(true)
+  assert.equal(result.stage,'updated');assert.equal(deployed,1)
+  const again=await f.setup.update(true);assert.equal(again.stage,'updated');assert.equal(deployed,1)
+  assert.ok(statSync(f.setup.state.steps.gatewayBackup.file).size>100)
 })

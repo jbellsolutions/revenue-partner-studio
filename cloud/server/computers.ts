@@ -84,8 +84,22 @@ export class Computers {
     void this.run(job)
     return {id:job,computerId:id,state:'preparing'}
   }
+  async update(id:string) {
+    if(!validId(id)||!this.control.store.computers().some(c=>c.id===id))throw Error('Choose a connected Orgo computer.')
+    const key=this.control.get('orgo.key');if(!key)throw Error('Connect your Orgo account first.')
+    if(!existsSync(path.join(this.assets,'runtime.tar.gz'))||!existsSync(path.join(this.assets,'runtime.sha256'))||!existsSync(path.join(this.assets,'update-remote.py')))throw Error('The update package is unavailable on this gateway.')
+    const computer=await this.request('computers/'+id,key)
+    if(computer.id!==id||computer.os!=='linux'||computer.status!=='running')throw Error('The selected Orgo Linux computer must be running.')
+    const active=(this.control.jobs() as any[]).map(j=>this.control.job(j.id)).find(j=>j.computer===id&&j.private?.kind==='update'&&!['updated','failed'].includes(j.state))
+    if(active)return active
+    const job=randomUUID(),pair=this.control.pairing(id)
+    const info={kind:'update',pair:pair.code,origin:this.origin,job,computerId:id,created:Date.now(),
+      artifactUrl:this.origin+'/setup/artifacts/'+pair.code+'/runtime.tar.gz',sha256:readFileSync(path.join(this.assets,'runtime.sha256'),'utf8').trim()}
+    this.control.saveJob(job,id,'preparing','Preparing a guarded extension update.',info)
+    void this.run(job);return {id:job,computerId:id,state:'preparing'}
+  }
   async resumeJobs() {
-    for(const j of this.control.jobs() as any[]) if(!['connected','failed','needs_action'].includes(j.state))void this.run(j.id)
+    for(const j of this.control.jobs() as any[]) if(!['connected','updated','failed','needs_action'].includes(j.state))void this.run(j.id)
   }
   async bash(computer:string,command:string) {
     const r=await this.request('computers/'+computer+'/bash',this.control.get('orgo.key'),{command})
@@ -98,6 +112,7 @@ export class Computers {
     let job=this.control.job(id)
     if(!job){this.running.delete(id);return}
     try {
+      if(job.private.kind==='update')return await this.runUpdate(id,job)
       if(this.online(job.computer)) {
         this.control.saveJob(id,job.computer,'connected','Connected. Open this computer to use its Hermes agents.',job.private);this.changed();return
       }
@@ -136,6 +151,28 @@ export class Computers {
       // is reconciled on the next pass; never rotate a pairing code on retry.
       this.control.saveJob(id,job.computer,error instanceof OrgoError&&error.permanent?'needs_action':job.state==='preparing'?'preparing':'installing',error instanceof OrgoError?error.message:'Reconnecting to setup. Installation progress is preserved.',job.private)
     } finally {this.running.delete(id)}
+  }
+  private async runUpdate(id:string,job:any) {
+    const base='/root/.hermes/studio-cloud/updates/'+id
+    try {
+      const script=readFileSync(path.join(this.assets,'update-remote.py'),'utf8')
+      const config=Buffer.from(JSON.stringify(job.private)).toString('base64'),code=Buffer.from(script).toString('base64')
+      const command=`python3 - <<'STUDIO_UPDATE'\nimport base64,subprocess\nfrom pathlib import Path\np=Path('${base}');p.mkdir(parents=True,exist_ok=True,mode=0o700)\nfor name,data in [('config.json','${config}'),('update.py','${code}')]:\n f=p/name;f.write_bytes(base64.b64decode(data));f.chmod(0o600)\nwith (p/'update.log').open('ab') as log:subprocess.Popen(['/usr/bin/python3',str(p/'update.py'),str(p/'config.json')],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)\nprint('STUDIO_UPDATE_STARTED')\nSTUDIO_UPDATE`
+      await this.bash(job.computer,command)
+      this.control.saveJob(id,job.computer,'updating','Backing up the extension and checking compatibility.',job.private)
+      for(let attempt=0;attempt<5&&!this.stopped;attempt++) {
+        const output=await this.bash(job.computer,`python3 - <<'STUDIO_UPDATE_STATUS'\nimport json\nfrom pathlib import Path\np=Path('${base}/status.json')\nprint('STUDIO_UPDATE '+(p.read_text() if p.exists() else json.dumps({'state':'updating','detail':'Update is starting.'})))\nSTUDIO_UPDATE_STATUS`)
+        const line=output.split('\n').find(l=>l.startsWith('STUDIO_UPDATE '))
+        if(line) {
+          const result=JSON.parse(line.slice(14)),state=['updated','failed','waiting'].includes(result.state)?result.state:'updating'
+          this.control.saveJob(id,job.computer,state,String(result.detail||'Updating extension.').slice(0,300),job.private)
+          if(state==='updated'||state==='failed')return
+        }
+        await new Promise(r=>setTimeout(r,3000))
+      }
+    } catch(error) {
+      this.control.saveJob(id,job.computer,'updating','Reconnecting to the guarded update. Saved progress and rollback files are preserved.',job.private)
+    }
   }
   artifact(code:string,name:string) {
     if(!['runtime.tar.gz','runtime.sha256'].includes(name))throw Error('Unknown installation artifact.')

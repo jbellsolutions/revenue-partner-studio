@@ -2,7 +2,7 @@
 
 ## Before You Start
 
-By Your AI Guy · Preparation guide · Updated September 14, 2026
+By Your AI Guy · Preparation guide · Updated September 16, 2026
 
 Revenue Partner Studio gives your Hermes agents a browser workspace and their own Orgo computers. You can chat, switch computers, explore skills and files, and take over an agent's screen. This guide helps you prepare your accounts before Claude Code or Codex installs your private copy.
 
@@ -57,4 +57,4 @@ Ask the assistant to install Revenue Partner Studio from the repository, read AG
 
 You handle account sign-in and consent. Your assistant does the technical setup. It should finish by giving you your private app link, a securely stored owner password, verification results and recovery instructions. Keep the password and the gateway encryption-key backup private.
 
-**Release status:** v0.2.0-beta.2. Each installation is one private workspace. The public demo is simulated, and this release is not shared multitenant SaaS. See the repository's release checks for current installation and reliability evidence.
+**Release status:** v0.2.0-beta.3 private-client pilot. Each installation is one private workspace. The public demo is simulated, and this release is not shared multitenant SaaS. Independent recipient installation, live four-screen acceptance and the clean 24-hour qualification remain required before an unconditional client-ready claim. See the repository's release checks for current evidence.

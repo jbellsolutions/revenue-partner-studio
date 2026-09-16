@@ -70,6 +70,16 @@ test('owner authentication, CSRF and connector identity are enforced', async t =
   socket.terminate()
   assert.equal(f.gateway.connectors.size, 0)
 })
+test('owner can download a transaction-consistent gateway backup with its matching key', async t => {
+  const f=await fixture(t)
+  const denied=await fetch(f.url+'/api/backup',{method:'POST'});assert.equal(denied.status,403)
+  const response=await fetch(f.url+'/api/backup',{method:'POST',headers:{Cookie:f.cookie,Origin:origin}})
+  assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'application/zip')
+  assert.match(response.headers.get('content-disposition')||'',/Revenue Partner Studio Backup/)
+  const bytes=Buffer.from(await response.arrayBuffer())
+  assert.equal(bytes.subarray(0,2).toString(),'PK')
+  assert.ok(bytes.includes(Buffer.from('studio.sqlite'))&&bytes.includes(Buffer.from('connection-key')))
+})
 test('identical agent names route to the owning computer and stable request IDs survive relay', async t => {
   const f = await fixture(t)
   const ca = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token })
@@ -111,6 +121,32 @@ test('identical agent names route to the owning computer and stable request IDs 
   const req = await until(() => ca.messages.find(m => m.type === 'request' && m.method === 'status'))
   cb.socket.send(JSON.stringify({ type: 'response', computerId: B, id: req.id, result: { computer: B } }))
   assert.equal((await p).computer, A)
+})
+test('screen tickets bind the viewer to one explicit screen session across connector restarts', async t => {
+  const f = await fixture(t)
+  const connector = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token })
+  const session = 'a'.repeat(32), screen = 'screen-assignment-one'
+  connector.socket.on('message', raw => {
+    const m = JSON.parse(raw.toString())
+    if (m.type === 'request' && m.method === 'screen.open')
+      connector.socket.send(JSON.stringify({ type: 'response', computerId: A, id: m.id,
+        result: { computerId: A, profile: 'brent', screenSessionId: session, screenId: screen, state: 'starting' } }))
+    if (m.type === 'request' && m.method === 'screen.release')
+      connector.socket.send(JSON.stringify({ type: 'response', computerId: A, id: m.id,
+        result: { computerId: A, profile: 'brent', released: true } }))
+  })
+  const opened = await (await f.post('/api/computers/' + A + '/rpc', {
+    method: 'screen.open', requestId: 'open-one', params: { agentId: 'brent' }
+  })).json()
+  assert.equal(opened.screenSessionId, session)
+  const viewer = await f.ws(opened.url + '?computerId=' + A, { Cookie: f.cookie, Origin: origin })
+  const connect = await until(() => connector.messages.find(m => m.type === 'screen.connect'))
+  assert.deepEqual({ session: connect.screenSessionId, screen: connect.screenId, agent: connect.agentId },
+    { session, screen, agent: 'brent' })
+  viewer.socket.close()
+  const released = await f.post('/api/computers/' + A + '/rpc', { method: 'screen.release', requestId: 'release-one',
+    params: { agentId: 'brent', screenSessionId: session, screenId: screen } })
+  assert.equal(released.status, 200)
 })
 test('event replay is ordered, targeted, and separated from other computers', async t => {
   const f = await fixture(t)

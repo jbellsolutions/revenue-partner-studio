@@ -1,6 +1,17 @@
 {
+  "schema": 2,
   "repository": "NousResearch/hermes-agent",
   "reviewed_release_sha": null,
   "reviewed_main_sha": null,
-  "review_evidence": null
+  "review_evidence": null,
+  "sources": [
+    {"id":"hermes-agent","kind":"github_release_and_branch","repository":"NousResearch/hermes-agent","branch":"main","private":false,"categories":["providers","profiles","memory_history","tools","coordination","installation","security"],"reviewedReleaseSha":null,"reviewedBranchSha":null},
+    {"id":"orgo-api-docs","kind":"url","url":"https://docs.orgo.ai/llms.txt","categories":["screens","installation","security"],"reviewedSha256":null},
+    {"id":"orgo-platform-changelog","kind":"url","url":"https://www.orgo.ai/changelog","categories":["screens","installation","security"],"reviewedSha256":null},
+    {"id":"orgo-linux-image","kind":"url","url":"https://www.orgo.ai/changelog/linux","categories":["screens","tools","installation","security"],"reviewedSha256":null},
+    {"id":"ai-guy-reference","kind":"github_branch","repository":"jbellsolutions/orgo-ai-guy-bot","branch":"main","private":true,"categories":["providers","profiles","memory_history","tools","installation"],"reviewedBranchSha":"758d3609d0c7f0a34ea7bdfbd2e7de4d351b9d1a"},
+    {"id":"studio-reference","kind":"github_branch","repository":"jbellsolutions/hermes-orgo-studio","branch":"main","private":true,"categories":["screens","coordination","installation","security"],"reviewedBranchSha":null},
+    {"id":"browser-use","kind":"github_release_and_branch","repository":"browser-use/browser-use","branch":"main","private":false,"categories":["tools","screens","security"],"reviewedReleaseSha":null,"reviewedBranchSha":null},
+    {"id":"agent-browser","kind":"github_release_and_branch","repository":"vercel-labs/agent-browser","branch":"main","private":false,"pinnedVersion":"0.26.0","categories":["tools","screens","security"],"reviewedReleaseSha":null,"reviewedBranchSha":null}
+  ]
 }

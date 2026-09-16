@@ -67,3 +67,23 @@ def test_no_changes_no_issue_api_and_new_change_creates_issue():
     calls.clear()
     assert watch.sync_issue(report, api) == 'reviewed'
     assert not calls
+
+
+def test_registry_classifies_changes_and_sanitizes_private_references(monkeypatch):
+    monkeypatch.setenv('UPSTREAM_READ_TOKEN','read-only-placeholder')
+    baseline={'schema':2,'sources':[
+        {'id':'public-doc','kind':'url','url':'https://example.test/docs','categories':['installation'],'reviewedSha256':None},
+        {'id':'private-reference','kind':'github_branch','repository':'owner/private','branch':'main','private':True,
+         'categories':['profiles'],'reviewedBranchSha':None}]}
+    report=watch.inspect_registry(baseline,lambda _:{'sha':'a'*40},lambda _:b'changed documentation')
+    assert report['review_required'] and report['categories']==['installation','profiles']
+    body=watch.registry_issue_body(report)
+    assert 'private-reference' in body and 'a'*40 not in body
+
+
+def test_registry_private_sources_require_dedicated_credentials(monkeypatch):
+    monkeypatch.delenv('UPSTREAM_READ_TOKEN',raising=False)
+    baseline={'schema':2,'sources':[{'id':'private-reference','kind':'github_branch','repository':'owner/private',
+        'branch':'main','private':True,'categories':['security'],'reviewedBranchSha':None}]}
+    report=watch.inspect_registry(baseline)
+    assert report['sources'][0]['status']=='maintainer_credentials_required'

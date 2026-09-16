@@ -1,6 +1,23 @@
-# v0.2.0-beta.2 — support and verification
+# Revenue Partner Studio release checks
 
 This document separates implemented behavior, automated coverage and live acceptance. The public demo is simulated; no demo action proves a model or computer connection.
+
+## v0.2.0-beta.3 private-client pilot
+
+The beta.3 candidate replaces permanent agent-to-display bindings with four prewarmed physical slots and private per-agent browser workspaces. Viewer-only switches release immediately, active task and human-control leases remain protected, a fifth visible task waits durably, and ordinary public research can use only the local headless browser. Screen tickets carry explicit session and screen identities, so a connector restart cannot attach a viewer to a stale reassignment. Chat remains independent of screen relay failures.
+
+The setup driver now has guided, provider, backup, support and guarded-update stages. Its journal contains resource receipts and hashes, not Orgo/provider keys. Gateway backups use SQLite's consistent backup operation and include the matching private encryption key; support packages exclude credentials and conversation content. Computer updates use one deduplicated job, verify computer identity and readiness, and preserve the prior extension for automatic restoration.
+
+Automated acceptance includes ten accepted tasks with four running and six queued, four separate screen assignments and a waiting fifth, private browser-data preservation through release/reassignment, idempotent release, explicit connector-session reattachment, authenticated backup, provider destination approval, guided resume, sanitized support output and deduplicated update behavior. Local release-candidate checks passed 178 affected Python tests across 22 files, 67 cloud tests, 11 setup/configuration tests and five fixture-only public-site tests. Cloud typecheck/build, site build and Python/Node syntax checks passed. Gitleaks reported no new findings in the staged change, extracted runtime package or built public site; nine runtime-package findings matched file-hash-bound reviewed fixtures. The two-page preparation guide was rendered and visually inspected after title-border sanitation. Hosted CI remains attached to the release commit when it runs.
+
+| Beta.3 gate | Current status |
+| --- | --- |
+| Source and focused compatibility suites | Local candidate passed the counts above; hosted CI and public-package scans attach to the release commit. |
+| Independent recipient installation | **Pending.** Must use independently authorized Railway, Orgo and provider accounts and pass real chat/tool/screen/reopen checks. |
+| Live four-screen browser acceptance | **Pending.** Automated ownership and queue behavior does not prove visible frames, input isolation or takeover on the target 8 GB computer. |
+| Performance targets | **Pending end-to-end measurement.** The interface shows useful preparing/waiting progress immediately; p95 switch, acknowledgment, first-frame and reconnect targets require the promoted revision. |
+| Clean 24-hour qualification | **Pending after final gateway and connector promotion.** Prior failed and mixed-version evidence is preserved below and is not reset or counted as beta.3 proof. |
+| Client-ready claim | **Not yet unconditional.** Publish beta.3 only as a private-client pilot until the three live gates above pass. |
 
 ## Supported scope
 

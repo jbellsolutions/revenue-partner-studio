@@ -153,3 +153,46 @@ def test_repair_requires_browser_directory_display_port_and_own_process_group(re
     with pytest.raises(RuntimeError,match='unverified owner'):screens.managed_identity(info,'chrome',42,proc)
     monkeypatch.setattr(screens.os,'getpgid',lambda pid:1)
     with pytest.raises(RuntimeError,match='ownership'):screens.managed_identity(info,'chrome',42,proc)
+
+
+def test_assignment_identity_changes_even_when_same_profile_reuses_same_slot(registry):
+    first = screens.screen('researcher')
+    assert screens.release('researcher')
+    second = screens.screen('researcher')
+    assert second['display'] == first['display']
+    assert second['screenId'] != first['screenId']
+    with pytest.raises(RuntimeError, match='assignment changed'):
+        with screens.action(first):
+            pytest.fail('a stale session must not control a reacquired slot')
+
+
+def test_release_preserves_prewarmed_slot_and_private_browser_data(registry, monkeypatch):
+    info = screens.screen('researcher')
+    profile = Path(info['directory'])
+    slot = Path(info['slotDirectory'])
+    (profile/'browser').mkdir(); (profile/'browser'/'Cookies').write_text('private')
+    for name, directory, pid in [('display', slot, 10), ('viewer', slot, 11), ('window-manager', slot, 12), ('chrome', profile, 13)]:
+        (directory/(name+'.process.json')).write_text(json.dumps({'pid': pid, 'start': 'live'}))
+    live = {info['vncPort'], info['wsPort'], info['cdpPort']}
+    monkeypatch.setattr(screens, 'listening', lambda port: port in live)
+    monkeypatch.setattr(screens, 'process_start', lambda pid: 'live')
+    monkeypatch.setattr(screens, 'managed_identity', lambda _info, name, pid: {'pid': pid, 'start': 'live'})
+    killed = []
+    def stop(pid, _signal):
+        killed.append(pid); live.discard(info['cdpPort'])
+    monkeypatch.setattr(screens.os, 'killpg', stop)
+    assert screens.release('researcher')
+    assert killed == [13]
+    assert info['vncPort'] in live and info['wsPort'] in live
+    assert (profile/'browser'/'Cookies').read_text() == 'private'
+    assert (slot/'display.process.json').exists() and (slot/'viewer.process.json').exists()
+
+
+def test_prewarm_does_not_assign_agents_or_start_private_browsers(registry, monkeypatch):
+    prepared = []
+    monkeypatch.setattr(screens, '_ensure_slot', lambda info: prepared.append(info))
+    result = screens.prewarm()
+    assert result['prepared'] == 4 and result['failures'] == []
+    assert {row['display'] for row in prepared} == {':100', ':101', ':102', ':103'}
+    assert not (registry/'screens.json').exists()
+    assert not list(registry.glob('slot-*/browser'))

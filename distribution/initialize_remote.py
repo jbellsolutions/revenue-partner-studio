@@ -18,12 +18,12 @@ def initialize(home: Path, computer_id: str):
         path.chmod(0o600)
     # Select a subscription provider without creating credentials or invoking it.
     # The installing owner can change this through Hermes' own provider setup.
-    grants=['terminal','file','web','studio','orgo-screen']
+    grants=['terminal','file','web','browser','studio','orgo-screen']
     config={'model':{'provider':'openai-codex','default':'gpt-5.6-luna'},
             'terminal':{'backend':'local','cwd':'/root/studio-projects'},
             'tools':{'enabled_toolsets':grants},
             'platform_toolsets':{'cli':grants,'desktop':grants},
-            'browser':{'allow_private_urls':True}}
+            'browser':{'allow_private_urls':True,'cloud_provider':'local','backend':'off','headed':False}}
     write(home/'config.yaml',yaml.safe_dump(config))
     write(home/'.env','ORGO_DEFAULT_COMPUTER_ID='+computer_id+'\nBROWSER_BACKEND=local\nPATH=/opt/hermes-orgo-studio/computer-tools/node_modules/.bin:/usr/local/bin:/usr/bin:/bin\n')
     (home/'studio').mkdir(mode=0o700)
@@ -35,7 +35,9 @@ def initialize(home: Path, computer_id: str):
           'Start projects by creating the named persistent specialists you need using studio_team. '
           'Use groups, explicit assignments, findings and revision requests. Each specialist must execute its own work. '
           'Never invent another agent’s response or claim a task passed without inspecting its evidence. '
-          'Use orgo-screen tools for visible browser and computer work. '
+          'Use the local headless browser for ordinary public research. Use orgo-screen for saved logins, uploads, '
+          'desktop interaction, live viewing, or takeover; wait when a visible slot is busy. Never silently move an '
+          'authenticated or visible task to another browser. '
           'Share project files only through /root/studio-projects; keep agent histories private. '
           'Stop for required permissions. Do not purchase capacity or switch to paid providers automatically.\n')
     return {'computerId':computer_id,'agents':1,'providerAuthenticated':False}

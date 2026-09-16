@@ -23,6 +23,7 @@ try {
   writeFileSync(join(output,'runtime.sha256'),createHash('sha256').update(readFileSync(join(output,'runtime.tar.gz'))).digest('hex'))
   copyFileSync(join(root,'distribution/connect.py'),join(output,'connect.py'))
   copyFileSync(join(root,'distribution/recover.py'),join(output,'recover.py'))
+  copyFileSync(join(root,'distribution/update-remote.py'),join(output,'update-remote.py'))
   copyFileSync(join(root,'distribution/connect-local.py'),join(output,'connect-local.py'))
   console.log('Created the Studio runtime package and checksum.')
 } finally {rmSync(temp,{recursive:true,force:true})}

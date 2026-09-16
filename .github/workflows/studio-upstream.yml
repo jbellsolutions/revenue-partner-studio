@@ -1,4 +1,4 @@
-name: Hermes upstream watch
+name: Studio upstream compatibility watch
 on:
   schedule:
     # Daily detection runs on GitHub even when the owner's Mac is closed.
@@ -22,4 +22,5 @@ jobs:
       - name: Inspect official release and development commits
         env:
           GH_TOKEN: ${{ github.token }}
+          UPSTREAM_READ_TOKEN: ${{ secrets.RPS_UPSTREAM_READ_TOKEN }}
         run: python3 distribution/check_upstream.py --publish

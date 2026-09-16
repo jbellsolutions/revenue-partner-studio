@@ -140,6 +140,35 @@ def test_text_work_dispatches_when_all_desktop_screens_are_occupied(tmp_path,mon
     assert s.store.rows('SELECT state FROM deliveries')[0]['state']=='running'
 
 
+def test_ten_accepted_tasks_start_four_turns_and_keep_six_durably_queued(tmp_path):
+    s=make_service(tmp_path)
+    for number in range(10):
+        name=f'agent-{number}'
+        path=tmp_path/'profiles'/name;path.mkdir(parents=True)
+        (path/'config.yaml').write_text('model: test\n')
+        s.store.add_agent(name,f'Agent {number}')
+        s.store.send('user',name,f'Task {number}',request_id=f'task-{number}')
+    sequence={'value':0}
+    def rpc(method,params):
+        if method=='session.create':
+            sequence['value']+=1;runtime=f'runtime-{sequence["value"]}'
+            s.server._sessions[runtime]={'running':False,'session_key':f'history-{runtime}','profile_home':tmp_path}
+            return {'session_id':runtime,'stored_session_id':f'history-{runtime}'}
+        if method=='prompt.submit':
+            s.server._sessions[params['session_id']]['running']=True
+        return {}
+    s.rpc=rpc
+    class TwentyIterations:
+        count=0
+        def wait(self,timeout):
+            self.count+=1
+            return self.count>20
+    s.stopped=TwentyIterations();s.dispatch()
+    states={row['state']:row['count'] for row in s.store.rows('SELECT state,count(*) AS count FROM deliveries GROUP BY state')}
+    assert states=={'queued':6,'running':4}
+    assert s.active_turns()==4
+
+
 def test_legacy_hermes_cli_bundle_grants_real_specialist_tools():
     from studio.service import specialist_toolsets
     grants=specialist_toolsets({'toolsets':['hermes-cli']})

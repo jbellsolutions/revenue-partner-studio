@@ -71,7 +71,7 @@ def build_server():
         deadline = time.monotonic() + 90
         while True:
             try:
-                info = ensure(profile, browser=True)
+                info = ensure(profile, browser=True, owner='task-' + str(os.getpid()))
                 break
             except RuntimeError as exc:
                 if 'screens are assigned' not in str(exc) or time.monotonic() >= deadline:

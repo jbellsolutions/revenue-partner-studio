@@ -1,7 +1,9 @@
 import { trustedOrigins } from './origins.ts'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
+import { readFile, stat, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { backup as sqliteBackup } from 'node:sqlite'
 import path from 'node:path'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Store, hash } from './store.ts'
@@ -9,7 +11,7 @@ import { ControlStore } from './control-store.ts'
 import { Computers } from './computers.ts'
 import { Recovery } from './recovery.ts'
 import { Transfers } from './transfers.ts'
-import {localSetup,localDownload} from './local-setup.ts'
+import {localSetup,localDownload,setupZip} from './local-setup.ts'
 import { publicWebsite, type PublicWebsiteOptions } from './public-website.ts'
 
 type Options = {
@@ -77,6 +79,7 @@ const METHODS = new Set([
   'import.chunk',
   'import.commit',
   'screen.open',
+  'screen.release',
   'screen.cancel_wait',
   'screen.authorize',
   'screen.stop',
@@ -106,7 +109,7 @@ export function createGateway(options: Options) {
     pending = new Map<string, Pending>()
   const tickets = new Map<
     string,
-    { computer: string; agent: string; expires: number; browser?: WebSocket; remote?: WebSocket }
+    { computer: string; agent: string; screenSessionId: string; screenId: string; expires: number; browser?: WebSocket; remote?: WebSocket }
   >()
   const failures = new Map<string, { count: number; since: number }>()
   const sessions = new Map<WebSocket, string>()
@@ -242,6 +245,23 @@ export function createGateway(options: Options) {
         }
         if (url.pathname === '/api/computers' && req.method === 'GET')
           return json(res, 200, { computers: directory() })
+        if(url.pathname==='/api/backup'&&req.method==='POST') {
+          const temporary=await mkdtemp(path.join(tmpdir(),'rps-gateway-backup-'))
+          try {
+            const database=path.join(temporary,'studio.sqlite')
+            await sqliteBackup(store.db,database)
+            const db=await readFile(database),key=Buffer.from(control.key)
+            const checksum=(value:Buffer)=>createHash('sha256').update(value).digest('hex')
+            const manifest=Buffer.from(JSON.stringify({schema:1,created:new Date().toISOString(),
+              files:{'studio.sqlite':checksum(db),'connection-key':checksum(key)},
+              restore:'Restore both files together into an isolated gateway before cutover.'},null,2)+'\n')
+            const data=setupZip([{name:'Revenue Partner Studio Backup/manifest.json',data:manifest,mode:0o100600},
+              {name:'Revenue Partner Studio Backup/studio.sqlite',data:db,mode:0o100600},
+              {name:'Revenue Partner Studio Backup/connection-key',data:key,mode:0o100600}])
+            res.setHeader('Content-Type','application/zip');res.setHeader('Cache-Control','no-store')
+            res.setHeader('Content-Disposition','attachment; filename="Revenue Partner Studio Backup.zip"');res.end(data);return
+          } finally { await rm(temporary,{recursive:true,force:true}) }
+        }
         if(url.pathname==='/api/orgo'&&req.method==='GET')return json(res,200,computers.state())
         if(url.pathname==='/api/orgo'&&req.method==='POST')return json(res,200,await computers.saveKey((await body(req)).key))
         if(url.pathname==='/api/orgo/refresh'&&req.method==='POST'){await computers.refresh();return json(res,200,computers.state())}
@@ -257,6 +277,7 @@ export function createGateway(options: Options) {
           return json(res,200,recovery!.status(b.computerId))
         }
         if(url.pathname==='/api/connections/install'&&req.method==='POST')return json(res,202,await computers.connect(String((await body(req)).computerId||'')))
+        if(url.pathname==='/api/connections/update'&&req.method==='POST')return json(res,202,await computers.update(String((await body(req)).computerId||'')))
         if(url.pathname==='/api/connections/local'&&req.method==='POST') {
           const b=await body(req)
           // Preparing a repair leaves the live connector and its credential intact.
@@ -304,9 +325,16 @@ export function createGateway(options: Options) {
             return json(res, 200, { computers: store.computers().map(c => ({ ...c, online: connectors.has(c.id) })) })
           const result = await rpc(computer, b.method, b.params || {}, b.requestId)
           if (b.method === 'screen.open' && !result.queued) {
+            // Older rollback connectors keep their assignment in memory. Give
+            // their otherwise compatible response a bounded gateway identity;
+            // current connectors always return the persisted host identity.
+            const legacy=!/^[0-9a-f]{32}$/.test(result.screenSessionId || '')||typeof result.screenId!=='string'
+            const screenSessionId=legacy?randomBytes(16).toString('hex'):result.screenSessionId
+            const screenId=legacy?'legacy:'+computer+':'+String(b.params.agentId):result.screenId
             const ticket = randomBytes(24).toString('hex')
-            tickets.set(ticket, { computer, agent: b.params.agentId, expires: Date.now() + 30000 })
-            return json(res, 200, { ...result, url: `/api/screens/${ticket}` })
+            tickets.set(ticket, { computer, agent: b.params.agentId, screenSessionId, screenId, expires: Date.now() + 30000 })
+            return json(res, 200, { ...result, screenSessionId, screenId, legacyScreenIdentity:legacy,
+              url: `/api/screens/${ticket}` })
           }
           return json(res, 200, result)
         }
@@ -571,7 +599,8 @@ export function createGateway(options: Options) {
             ws.close(1013, 'Computer offline')
             return
           }
-          send(c, { type: 'screen.connect', computerId: entry.computer, agentId: entry.agent, ticket })
+          send(c, { type: 'screen.connect', computerId: entry.computer, agentId: entry.agent, ticket,
+            screenSessionId: entry.screenSessionId, screenId: entry.screenId })
         }
         const queue: Buffer[] = []
         let bytes = 0

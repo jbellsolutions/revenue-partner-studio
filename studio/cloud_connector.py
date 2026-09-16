@@ -25,7 +25,7 @@ from .cloud_ledger import Ledger
 PROFILE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
 WRITES = {'chat.send', 'chat.cancel', 'agents.create', 'import.apply', 'settings.update', 'profile.settings.update', 'screen.capacity', 'screen.repair',
           'import.commit', 'tasks.cancel', 'tasks.resume', 'a2a.receive', 'providers.begin', 'providers.submit', 'peer.send', 'peer.receive', 'approvals.resolve',
-          'agents.update', 'providers.configure', 'skills.update', 'models.select', 'endpoints.configure'}
+          'agents.update', 'providers.configure', 'skills.update', 'models.select', 'endpoints.configure', 'screen.release'}
 
 
 class Connector:
@@ -60,7 +60,6 @@ class Connector:
         self.jobs = set()
         self.peers = []
         self.peer_directory = []
-        self.screens = {}
         self.agent_cache = {}
         self.permission_lock = asyncio.Lock()
         from .cloud_history import HistoryCatalog
@@ -130,9 +129,9 @@ class Connector:
         finally:
             self.pending.pop(rid, None)
 
-    async def emit(self, kind, payload, runtime=None):
+    async def emit(self, kind, payload, runtime=None, agent=None):
         async with self.event_lock:
-            event = self.ledger.event(kind, payload, runtime)
+            event = self.ledger.event(kind, payload, runtime, agent)
             await self.cloud_send({'type': 'event', **event})
 
     async def cloud_send(self, value):
@@ -251,6 +250,10 @@ class Connector:
                                 delivery = p.get('payload', {})
                                 if delivery.get('runtime_id') and delivery.get('recipient'):
                                     self.ledger.bind(delivery['runtime_id'], delivery['recipient'], delivery.get('stored_id'))
+                            payload = p.get('payload') if isinstance(p.get('payload'), dict) else {}
+                            tool = str(payload.get('name') or payload.get('tool') or payload.get('tool_name') or '')
+                            if p.get('type') == 'tool.start' and tool.startswith('browser_'):
+                                await self.emit('screen.headless', {'state': 'working_headlessly', 'tool': tool}, p.get('session_id'))
                             await self.emit(p.get('type', 'runtime.event'), p.get('payload', {}), p.get('session_id'))
             except asyncio.CancelledError:
                 raise
@@ -406,7 +409,7 @@ class Connector:
                     'epoch': self.runtime_epoch, 'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
                     'state': 'ready' if connected else 'hermes_unavailable', 'message': error,
                     'runtimeVersion': capabilities.get('extensionVersion', 'legacy'),
-                    'connectorVersion': 'connector-recovery-1.3', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
+                    'connectorVersion': 'screen-sessions-1.0', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
         if method=='import.preview':
             from .cloud_library import Library
             if p.get('bundle'):return await asyncio.to_thread(Library(self.home).preview,self.computer,p['bundle'])
@@ -601,6 +604,18 @@ class Connector:
                 return await self.screen(agent, 'status')
             if method == 'screen.cancel_wait':
                 return await self.screen(agent, 'cancel')
+            if method == 'screen.release':
+                session = str(p.get('screenSessionId') or '')
+                if not re.fullmatch(r'[0-9a-f]{32}', session):
+                    raise ValueError('Invalid screen session')
+                status = await self.screen(agent, 'status')
+                requested = p.get('screenId')
+                if requested and status.get('screenId') and requested != status['screenId']:
+                    return {'computerId': self.computer, 'profile': agent, 'released': True, 'stale': True}
+                result = await self.screen(agent, 'drop', 'view-' + session)
+                await self.emit('screen.released', {'screenSessionId': session, 'screenId': requested,
+                    'released': bool(result.get('released'))}, agent=agent)
+                return result
             if self.local_screen:
                 info=self.local_screen.operation(agent,method)
                 if method in {'screen.pause','screen.stop'}:
@@ -608,11 +623,25 @@ class Connector:
                         with contextlib.suppress(RuntimeError):await self.rpc('session.interrupt',{'session_id':row['runtime']})
                 return info
             if method in {'screen.authorize','screen.stop'}:raise ValueError('This operation is only available for a local Mac desktop.')
-            info = await self.screen(agent, 'ensure' if method == 'screen.open' else 'pause' if method == 'screen.pause' else 'resume')
-            if info.get('queued'): return info
+            screen_session = uuid.uuid4().hex if method == 'screen.open' else None
+            owner = 'view-' + screen_session if screen_session else None
+            try:
+                info = await self.screen(agent, 'ensure' if method == 'screen.open' else 'pause' if method == 'screen.pause' else 'resume', owner)
+            except Exception as exc:
+                if method == 'screen.open':
+                    await self.emit('screen.failed', {'state': 'repair_needed' if 'unverified owner' in str(exc).lower() else 'disconnected',
+                        'error': str(exc)[:250]}, agent=agent)
+                raise
+            if info.get('queued'):
+                info.update({'state': 'waiting', 'mode': 'visible', 'retryAfterMs': 1500})
+                await self.emit('screen.waiting', {'position': info.get('position'), 'capacity': info.get('capacity')}, agent=agent)
+                return info
             if method == 'screen.open':
-                self.screens[agent] = info
-            return {k: v for k, v in info.items() if k in {'computerId', 'profile', 'paused', 'display', 'sharedScreen'}} | {'password': self.screen_password()}
+                info.update({'screenSessionId': screen_session, 'state': 'starting', 'mode': 'visible'})
+                await self.emit('screen.assigned', {'screenSessionId': screen_session, 'screenId': info.get('screenId'),
+                    'display': info.get('display'), 'state': 'starting'}, agent=agent)
+            return {k: v for k, v in info.items() if k in {'computerId', 'profile', 'paused', 'display', 'sharedScreen',
+                'screenSessionId', 'screenId', 'state', 'mode', 'capacity', 'position', 'retryAfterMs'}} | {'password': self.screen_password()}
         if method == 'peers.list':
             await self.cloud_send({'type': 'peers.list'})
             return {'computers': self.peers}
@@ -745,7 +774,7 @@ class Connector:
         info = json.loads(out)
         if info.get('computerId') != self.computer or info.get('profile') != agent:
             raise ValueError('Screen identity mismatch')
-        if info.get('queued') or operation in {'hold', 'drop', 'cancel', 'status', 'capacity', 'repair'}: return info
+        if info.get('queued') or operation in {'hold', 'drop', 'cancel', 'status', 'capacity', 'repair', 'prewarm', 'release'}: return info
         port = int(info['wsPort'])
         if port not in range(6199, 6216) or info.get('display') != ':' + str(port - 6100) or (agent == 'default') != (port == 6199):
             raise ValueError('Unexpected screen transport')
@@ -818,13 +847,15 @@ class Connector:
     async def screen_tunnel(self, message):
         if self.local_screen:return await self.local_screen_tunnel(message)
         agent = message['agentId']
-        info = self.screens.get(agent)
-        if not info:
+        session = message.get('screenSessionId') or ''
+        if not re.fullmatch(r'[0-9a-f]{32}', session): return
+        info = await self.screen(agent, 'status')
+        if info.get('screenId') != message.get('screenId') or info.get('state') not in {'ready', 'starting'}:
             return
         base = self.config['cloudUrl'].replace('https:', 'wss:').replace('http:', 'ws:').rstrip('/')
         url = base + '/connect/screen/' + message['ticket'] + '?' + urlencode({'computerId': self.computer})
         token = Path(self.config['connectorTokenFile']).read_text().strip()
-        owner = 'view-' + hashlib.sha256(message['ticket'].encode()).hexdigest()[:24]
+        owner = 'view-' + session
         async def renew():
             while True:
                 await asyncio.sleep(8)
@@ -838,6 +869,7 @@ class Connector:
                 raise RuntimeError('Screen assignment changed; reconnect the viewer.')
             async with connect(f"ws://127.0.0.1:{info['wsPort']}", max_size=8*1024*1024) as local:
                 async with connect(url, additional_headers={'Authorization': 'Bearer ' + token}, max_size=8*1024*1024) as remote:
+                    await self.emit('screen.live', {'screenSessionId': session, 'screenId': info.get('screenId')}, agent=agent)
                     async def pump(source, destination):
                         async for frame in source: await destination.send(frame)
                     tasks = [asyncio.create_task(pump(local, remote)), asyncio.create_task(pump(remote, local)), asyncio.create_task(renew())]
@@ -923,6 +955,15 @@ class Connector:
         self.spawn(self.hermes_loop())
         self.spawn(self.peer_loop())
         self.spawn(self.directory_loop())
+        if self.config.get('screenControl') and not self.local_screen:
+            async def prewarm_screens():
+                try:
+                    result = await self.screen('default', 'prewarm')
+                    await self.emit('screen.prewarmed', {'prepared': result.get('prepared', 0),
+                        'capacity': result.get('capacity'), 'failures': result.get('failures', [])})
+                except Exception as exc:
+                    await self.emit('screen.prewarm_failed', {'error': str(exc)[:250]})
+            self.spawn(prewarm_screens())
         async def pause_watch():
             while True:
                 if self.config.get('kind')=='local' and (self.home/'studio-cloud/access-paused').exists() and self.cloud:

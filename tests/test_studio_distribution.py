@@ -18,7 +18,9 @@ def test_fresh_home_and_conflicting_retry(tmp_path):
     assert len(token.strip())>=48
     assert (home/'studio/gateway-token').stat().st_mode & 0o777 == 0o600
     assert not (home/'auth.json').exists()
-    assert yaml.safe_load((home/'config.yaml').read_text())['tools']['enabled_toolsets']==['terminal','file','web','studio','orgo-screen']
+    config=yaml.safe_load((home/'config.yaml').read_text())
+    assert config['tools']['enabled_toolsets']==['terminal','file','web','browser','studio','orgo-screen']
+    assert config['browser']=={'allow_private_urls':True,'backend':'off','cloud_provider':'local','headed':False}
     with pytest.raises(RuntimeError,match='overwrite'):
         initialize(home,'22222222-2222-4222-8222-222222222222')
     assert (home/'studio/gateway-token').read_text()==token

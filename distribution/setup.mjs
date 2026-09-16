@@ -14,7 +14,8 @@ import {
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { randomUUID, randomBytes } from 'node:crypto'
+import { randomUUID, randomBytes, createHash } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
@@ -173,6 +174,54 @@ export class Setup {
       next: 'Resume connect to inspect the same installation job. It preserves existing Hermes state.'
     }
   }
+  async provider(provider, key, approveTransfer = false, agentId = 'default') {
+    if (!['anthropic', 'openrouter'].includes(provider))
+      throw Error('Guided API-key setup supports Anthropic or OpenRouter. Use Studio for subscription sign-in.')
+    if (key && !approveTransfer)
+      throw Error('Approve transfer of this provider key to the selected profile on this private Studio before saving it.')
+    const api = await this.session(), computerId = this.state.binding?.computerId
+    if (!computerId) throw Error('Install and bind a computer before configuring a provider.')
+    const rpc = (method, params = {}, requestId = randomUUID()) =>
+      api('/api/computers/' + computerId + '/rpc', { method, params: { ...params, agentId, computerId }, requestId })
+    if (key) await rpc('providers.configure', { provider, apiKey: key }, 'provider-save-' + this.state.id + '-' + provider)
+    const check = await rpc('providers.check', { provider }, 'provider-check-' + this.state.id + '-' + provider)
+    this.state.provider = { provider, agentId, status: check.status, checkedAt: new Date().toISOString() }
+    this.save()
+    return { stage: 'provider', provider, agentId, status: check.status, message: check.message }
+  }
+  async backup() {
+    const api = await this.session()
+    if (typeof api.download !== 'function') throw Error('This setup adapter cannot download a private gateway backup.')
+    const bytes = await api.download('/api/backup', {})
+    if (!Buffer.isBuffer(bytes) || bytes.length < 100 || bytes.subarray(0,2).toString() !== 'PK')
+      throw Error('Gateway backup was incomplete; update was not started.')
+    const directory = resolve(this.directory,'backups');mkdirSync(directory,{recursive:true,mode:0o700})
+    const file = resolve(directory,'gateway-'+new Date().toISOString().replaceAll(':','-')+'.zip')
+    writePrivate(file,bytes)
+    const receipt={file,sha256:createHash('sha256').update(bytes).digest('hex'),created:new Date().toISOString()}
+    this.state.steps.gatewayBackup=receipt;this.save();return {stage:'backup',...receipt}
+  }
+  async update(approved = false) {
+    if (!approved) throw Error('Owner approval is required to deploy this release and update the selected computer.')
+    const version=JSON.parse(readFileSync(resolve(ROOT,'package.json'),'utf8')).version
+    const binding=this.state.binding
+    if(!binding||!this.state.url)throw Error('Install this workspace before updating it.')
+    if(!this.state.steps.gatewayBackup)await this.backup()
+    const marker='rps-update-'+version+'-'+this.state.id,target={...binding,serviceId:this.state.steps.service?.id}
+    if(!target.serviceId)throw Error('The saved gateway service receipt is missing; reconcile installation before updating.')
+    await this.once('gatewayUpdate-'+version,()=>this.io.findUpdateDeployment(target,marker),()=>this.io.deployUpdate(target,marker))
+    const api=await this.session(),computerId=binding.computerId
+    const existing=this.state.update?.version===version?this.state.update:null
+    let job=existing
+    if(!job){job=await api('/api/connections/update',{computerId});this.state.update={id:job.id,state:job.state,version};this.save()}
+    const orgo=await api('/api/orgo'),remote=orgo.jobs?.find(row=>row.id===job.id)
+    if(remote){this.state.update={id:job.id,state:remote.state,version};this.save()}
+    if(!remote||!['updated','failed'].includes(remote.state))return {stage:'updating',state:remote?.state||job.state,
+      next:'The same guarded computer update is still running. Rerun update to reconcile it.'}
+    if(remote.state==='failed')throw Error(remote.detail||'The computer update failed and restored its prior extension.')
+    const verification=await this.verify(false)
+    return {stage:'updated',version,computerId,backup:this.state.steps.gatewayBackup,verification}
+  }
   async verify(approveTest = false) {
     const api = await this.session(),
       computerId = this.state.binding.computerId
@@ -226,8 +275,65 @@ export class Setup {
       result.chatAndTool = valid ? 'passed' : 'failed_evidence'
       this.state.steps.realTool = valid
       this.save()
+      if (valid && !this.state.steps.screenBackend) {
+        const opened = await rpc('screen.open', { agentId: t.agentId }, 'install-screen-' + this.state.id)
+        if (opened.queued) result.screenTakeover = 'waiting_for_screen'
+        else if (opened.screenSessionId && opened.screenId) {
+          await rpc('screen.pause', { agentId: t.agentId }, 'install-takeover-' + this.state.id)
+          await rpc('screen.resume', { agentId: t.agentId }, 'install-resume-' + this.state.id)
+          await rpc('screen.release', { agentId: t.agentId, screenSessionId: opened.screenSessionId,
+            screenId: opened.screenId }, 'install-release-' + this.state.id)
+          this.state.steps.screenBackend = true
+          result.screenTakeover = 'backend_passed_browser_frame_pending'
+          this.save()
+        } else result.screenTakeover = 'failed_identity'
+      } else if (this.state.steps.screenBackend) result.screenTakeover = 'backend_passed_browser_frame_pending'
     } else result.chatAndTool = saved.state
+    this.state.lastVerification = result
+    this.save()
     return result
+  }
+  async guided(config, options = {}) {
+    const preflight = await this.preflight()
+    if (!preflight.ready) return { ...preflight, next: 'Resolve the failed checks, then rerun guided setup.' }
+    if (!config) return { stage: 'destination_required', ready: false, projectName: preflight.projectName,
+      required: ['projectId', 'environmentId', 'computerId'],
+      next: 'Select the owner’s Railway project/environment and one existing Orgo computer, then rerun with --config.' }
+    const installed = await this.install(config, !!options.approveResources)
+    const connection = await this.connect(options.orgoKey, !!options.approveOrgoKey)
+    if (connection.stage !== 'connected') return { stage: 'connecting', installed, connection,
+      next: 'The existing installation job is still running. Rerun the same guided command to reconcile it.' }
+    let provider
+    if (options.provider)
+      provider = await this.provider(options.provider, options.providerKey, !!options.approveProviderKey, options.agentId)
+    const verification = await this.verify(!!options.approveTest)
+    return { stage: verification.chatAndTool === 'passed' ? 'verification' : 'verification_pending',
+      installed, connection, provider, verification,
+      next: verification.chatAndTool === 'passed'
+        ? 'Complete the live browser-frame acceptance and save the sanitized support bundle.'
+        : 'Rerun guided setup to reconcile the same verification task.' }
+  }
+  supportBundle() {
+    const digest = value => value ? createHash('sha256').update(String(value)).digest('hex').slice(0, 12) : null
+    const report = {
+      product: 'Revenue Partner Studio by Your AI Guy',
+      release: JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).version,
+      generatedAt: new Date().toISOString(), node: process.version,
+      installation: {
+        id: digest(this.state.id), destination: digest(JSON.stringify(this.state.binding || {})),
+        stages: Object.fromEntries(Object.entries(this.state.steps || {}).map(([key, value]) => [key, !!value])),
+        connection: this.state.connection?.state || null,
+        provider: this.state.provider ? { provider: this.state.provider.provider, status: this.state.provider.status } : null
+      },
+      capabilities: this.state.lastVerification || null,
+      privacy: 'No credentials, account IDs, computer IDs, URLs, conversation content, prompts, files, or model replies are included.'
+    }
+    const json = JSON.stringify(report, null, 2) + '\n'
+    const reportFile = resolve(this.directory, 'support-report.json')
+    const bundleFile = resolve(this.directory, 'revenue-partner-studio-support.json.gz')
+    writePrivate(reportFile, json)
+    writePrivate(bundleFile, gzipSync(Buffer.from(json)))
+    return { stage: 'support', report: reportFile, bundle: bundleFile, sanitized: true }
   }
 }
 export function cliAdapter(cwd = ROOT) {
@@ -322,6 +428,15 @@ export function cliAdapter(cwd = ROOT) {
     },
     deploy: async (b, id) =>
       run(['up', ...flags(b), '--detach', '--json', '--message', 'rps-install-' + id], undefined, false),
+    findUpdateDeployment: async (b, marker) => {
+      const rows=run(['deployment','list',...flags(b),'--json'])
+      const row=rows.find(d=>[d.meta?.message,d.meta?.cliMessage,d.meta?.commitMessage,d.message].includes(marker))
+      if(!row)return null
+      if(['FAILED','CRASHED','REMOVED'].includes(String(row.status).toUpperCase()))throw Error('The gateway update failed. The prior healthy deployment and downloaded backup were preserved.')
+      return String(row.status).toUpperCase()==='SUCCESS'?{id:row.id,status:'SUCCESS'}:null
+    },
+    deployUpdate: async (b, marker) =>
+      run(['up',...flags(b),'--detach','--json','--message',marker],undefined,false),
     session: async (url, password) => {
       const origin = new URL(url).origin
       if (!origin.startsWith('https://')) throw Error('HTTPS is required for private setup.')
@@ -347,10 +462,15 @@ export function cliAdapter(cwd = ROOT) {
       const login = await request('/api/login', { password }),
         cookie = login.headers.get('set-cookie')?.split(';')[0]
       if (!cookie) throw Error('Studio did not return an authenticated session.')
-      return async (route, body) => {
+      const api = async (route, body) => {
         if (!route.startsWith('/api/')) throw Error('Invalid setup route.')
         return (await request(route, body, cookie)).json()
       }
+      api.download = async (route, body) => {
+        if (!route.startsWith('/api/')) throw Error('Invalid setup route.')
+        return Buffer.from(await (await request(route, body, cookie)).arrayBuffer())
+      }
+      return api
     }
   }
 }
@@ -377,15 +497,28 @@ async function main() {
       config = value('--config')
     let result
     if (stage === 'preflight') result = await setup.preflight()
-    else if (stage === 'install') {
+    else if (stage === 'guided') {
+      result = await setup.guided(config ? JSON.parse(readFileSync(config, 'utf8')) : undefined, {
+        approveResources: args.includes('--approve-resources'), orgoKey: process.env.ORGO_API_KEY,
+        approveOrgoKey: args.includes('--approve-key-transfer'), provider: process.env.RPS_PROVIDER,
+        providerKey: process.env.RPS_PROVIDER_API_KEY, approveProviderKey: args.includes('--approve-provider-key-transfer'),
+        agentId: value('--agent') || 'default', approveTest: args.includes('--approve-test')
+      })
+    } else if (stage === 'install') {
       if (!config) throw Error('Supply --config with the private destination configuration.')
       result = await setup.install(JSON.parse(readFileSync(config, 'utf8')), args.includes('--approve-resources'))
     } else if (stage === 'connect')
       result = await setup.connect(process.env.ORGO_API_KEY, args.includes('--approve-key-transfer'))
+    else if (stage === 'provider')
+      result = await setup.provider(String(process.env.RPS_PROVIDER || ''), process.env.RPS_PROVIDER_API_KEY,
+        args.includes('--approve-provider-key-transfer'), value('--agent') || 'default')
     else if (stage === 'verify') result = await setup.verify(args.includes('--approve-test'))
+    else if (stage === 'backup') result = await setup.backup()
+    else if (stage === 'update') result = await setup.update(args.includes('--approve-update'))
+    else if (stage === 'support') result = setup.supportBundle()
     else if (stage === 'status')
       result = { ...setup.state, ownerPassword: 'Stored privately; never included in this report.' }
-    else throw Error('Use preflight, install, connect, verify or status.')
+    else throw Error('Use guided, preflight, install, connect, provider, verify, backup, update, support or status.')
     console.log(JSON.stringify(result, null, 2))
   } finally {
     closeSync(fd)

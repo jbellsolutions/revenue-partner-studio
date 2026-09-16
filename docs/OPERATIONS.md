@@ -14,7 +14,11 @@ On each computer, retain consistent Hermes database snapshots and the matching p
 
 Review the new release notes and checks. Fetch the public release into a clean independent source folder, verify checksums, and run relevant compatibility tests. Back up state, deploy the new gateway build to the same Railway service/volume, and confirm the URL/login/computer bindings remain unchanged. Use the existing connector update/repair path one computer at a time; it checks and preserves existing installations. Recheck real chat/tools, handoff and screen ownership before proceeding to the next computer.
 
+The client setup driver makes this resumable. `node distribution/setup.mjs backup` downloads a transaction-consistent gateway database with its matching key into the private setup state. After the owner approves the reviewed release and destination, `node distribution/setup.mjs update --approve-update` deploys one release marker, updates the selected computer once and reconciles the existing job on resume. The computer updater verifies identity and checks readiness; a failed readiness check restores the saved extension. Use `node distribution/setup.mjs support` for a sanitized support package without credentials or conversation content.
+
 Do not blindly merge Hermes upstream. Pin the reviewed runtime and preserve provider isolation and custom coordination. Internal IDs and paths intentionally keep historical names; changing them can create a second installation. Older applications remain rollback clients until acceptance passes.
+
+The upstream watcher covers official Hermes releases and development, official Orgo documentation and platform/Linux changelogs, private AI Guy and Studio references through a read-only maintainer token, and the pinned Browser Use/agent-browser integrations. It classifies changes and opens one deduplicated review item. It never merges or promotes an upstream change automatically. Promotion remains CI, internal canary, backup/restore, a clean 24-hour qualification and an owner-approved client update.
 
 ## Optional public website on the existing service
 

@@ -25,7 +25,7 @@ def specialist_toolsets(owner):
     disabled=(owner.get('agent') or {}).get('disabled_toolsets') or []
     for grant in disabled: allowed.difference_update(resolve_toolset(grant))
     result=[]
-    for name in ('terminal','file','web','skills','memory','session_search','vision'):
+    for name in ('terminal','file','web','browser','skills','memory','session_search','vision'):
         tools=set(resolve_toolset(name))
         if name not in disabled and (tools and tools.issubset(allowed)): result.append(name)
     if 'orgo-screen' not in disabled and ('orgo-screen' in grants or 'browser_navigate' in allowed): result.append('orgo-screen')
@@ -49,7 +49,7 @@ def screen_config(profile):
                    'HERMES_HOME':str(Path('/root/.hermes') if profile=='default' else Path('/root/.hermes/profiles')/profile),
                    'ORGO_DEFAULT_COMPUTER_ID':computer_id,
                    'BROWSER_BACKEND':'local',
-                   'STUDIO_SCREEN_SCHEMA_REVISION':'2',
+                   'STUDIO_SCREEN_SCHEMA_REVISION':'3',
                    'PATH':str(Path(__file__).resolve().parent.parent/'distribution/computer-tools/node_modules/.bin')+':/opt/hermes-orgo-studio/computer-tools/node_modules/.bin:/usr/local/bin:/usr/bin:/bin'}}
 
 
@@ -178,7 +178,8 @@ class Service:
             config['tools']={'enabled_toolsets':config['toolsets']}
             config['display']={'personality':''}
             config['approvals']={key:value for key,value in owner.get('approvals',{}).items() if key in {'mode','timeout'}}
-            config['browser']={'allow_private_urls':owner.get('browser',{}).get('allow_private_urls') is True}
+            config['browser']={'allow_private_urls':owner.get('browser',{}).get('allow_private_urls') is True,
+                               'cloud_provider':'local','backend':'off','headed':False}
             import shutil
             for source in skill_paths:
                 target=home/'skills'/source.relative_to(self.home/'skills')
@@ -189,7 +190,9 @@ class Service:
               'Use studio_team to exchange explicit findings and revision requests. '
               'Other agents have private histories. Do not access them or credentials. '
               f'Use {Path.home()/"studio-projects"} for deliberately shared work. '
-              'Your terminal and browser execute on Orgo. Never invent teammate replies.\n')
+              'Your terminal and browser execute on Orgo. Use the local headless browser for ordinary public research. '
+              'Use orgo-screen for saved logins, uploads, desktop interaction, live viewing, or takeover; wait if a visible slot is busy. '
+              'Never switch a visible or authenticated task to a different browser. Never invent teammate replies.\n')
             result=self.store.add_agent(name,role)
             return result
 
@@ -511,7 +514,7 @@ def register(server):
         try: return server._ok(rid,dispatch(_service,params))
         except Exception as exc: return server._err(rid,4096,str(exc))
     server._methods['studio.a2a']=a2a
-    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'profileSettings':True,'sessionRecovery':True,'transportRecovery':True,'historySearch':True,'extensionVersion':'history-recovery-4','limits':_service.settings()})
+    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'profileSettings':True,'sessionRecovery':True,'transportRecovery':True,'historySearch':True,'screenSessions':True,'headlessOverflow':'local','extensionVersion':'client-ready-screens-1','limits':_service.settings()})
     from .session_recovery import inspect_session, bind_session, recover_sessions
     original_create = server._methods['session.create']
     def create_session(rid, params):

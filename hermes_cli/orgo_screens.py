@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -118,7 +119,7 @@ def locked(path: Path):
         yield
 
 
-def write_json(path: Path, value: dict) -> None:
+def write_json(path: Path, value) -> None:
     staging = path.with_suffix(".tmp")
     staging.write_text(json.dumps(value), encoding="utf-8")
     staging.chmod(0o600)
@@ -148,6 +149,36 @@ def bind(computer_id: str) -> None:
         write_json(path, {"computerId": computer_id})
 
 
+def _identities(base: Path) -> tuple[Path, dict]:
+    path = base / 'screen-identities.json'
+    return path, json.loads(path.read_text()) if path.exists() else {}
+
+
+def _info(profile: str, display: int, computer_id: str) -> dict:
+    base = root()
+    directory = base / profile
+    directory.mkdir(mode=0o700, exist_ok=True)
+    slot = base / 'slots' / str(display)
+    slot.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return {"profile": profile, "computerId": computer_id, "display": f":{display}",
+            "vncPort": 5900 + display, "wsPort": 6100 + display,
+            "cdpPort": 9300 + display, "directory": str(directory),
+            "slotDirectory": str(slot)}
+
+
+def _screen_id(base: Path, profile: str, display: int, *, create: bool) -> str | None:
+    path, values = _identities(base)
+    row = values.get(profile)
+    if isinstance(row, dict) and row.get('display') == display and isinstance(row.get('screenId'), str):
+        return row['screenId']
+    if not create:
+        return None
+    value = secrets.token_hex(16)
+    values[profile] = {'display': display, 'screenId': value, 'assigned': time.time()}
+    write_json(path, values)
+    return value
+
+
 def screen(profile: str) -> dict:
     if not PROFILE.fullmatch(profile):
         raise ValueError("Invalid agent profile")
@@ -168,13 +199,14 @@ def screen(profile: str) -> dict:
             state[profile] = free[0]
             write_json(path, state)
             write_json(base / 'screen-queue.json', [r for r in queue if r['profile'] != profile])
-            directory = base / profile; directory.mkdir(mode=0o700, exist_ok=True)
-            write_json(directory / 'leases.json', {'reservation': time.time() + 30})
+            directory = base / profile
+            directory.mkdir(mode=0o700, exist_ok=True)
+            # The file marks assignments created by the lease-aware runtime;
+            # an empty document reserves nothing and can be reclaimed at once.
+            write_json(directory / 'leases.json', {})
         display = state[profile]
-    directory = base / profile
-    directory.mkdir(mode=0o700, exist_ok=True)
-    return {"profile": profile, "computerId": computer_id, "display": f":{display}", "vncPort": 5900 + display,
-            "wsPort": 6100 + display, "cdpPort": 9300 + display, "directory": str(directory)}
+        screen_id = _screen_id(base, profile, display, create=True)
+    return {**_info(profile, display, computer_id), 'screenId': screen_id}
 
 
 def listening(port: int) -> bool:
@@ -191,11 +223,39 @@ def listening(port: int) -> bool:
     return False
 
 
+def _service_directory(info: dict, name: str) -> Path:
+    return Path(info['slotDirectory'] if name in {'display', 'viewer', 'window-manager'} else info['directory'])
+
+
+def _record_candidates(info: dict, name: str):
+    primary = _service_directory(info, name) / (name + '.process.json')
+    yield primary
+    legacy = Path(info['directory']) / (name + '.process.json')
+    if legacy != primary:
+        yield legacy
+
+
+def _verified_record(info: dict, name: str, *, promote: bool = True) -> dict | None:
+    for record in _record_candidates(info, name):
+        if not record.exists():
+            continue
+        value = json.loads(record.read_text())
+        if value.get('start') and process_start(value.get('pid', 0)) == value['start']:
+            identity = managed_identity(info, name, value['pid'])
+            primary = _service_directory(info, name) / (name + '.process.json')
+            if promote and record != primary:
+                write_json(primary, identity)
+            return identity
+    return None
+
+
 def spawn(info: dict, name: str, command: list[str]) -> None:
-    with (Path(info["directory"]) / (name + ".log")).open("ab") as log:
+    directory = _service_directory(info, name)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (directory / (name + ".log")).open("ab") as log:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                          env={**os.environ, "DISPLAY": info["display"]}, start_new_session=True)
-        write_json(Path(info["directory"]) / (name + ".process.json"),
+        write_json(directory / (name + ".process.json"),
                    {"pid": process.pid, "start": process_start(process.pid)})
 
 
@@ -208,11 +268,62 @@ def wait_port(port: int) -> None:
     raise RuntimeError(f"Cloud screen service did not start on port {port}")
 
 
-def ensure(profile: str, *, browser: bool = False) -> dict:
+def _ensure_slot(info: dict) -> None:
+    profile = info['profile']
+    for name, port in [('display', info['vncPort']), ('viewer', info['wsPort'])]:
+        # The primary Orgo desktop predates this manager and remains owned by
+        # the computer image. Specialist slots must always have an exact local
+        # process identity before they can be reused.
+        if profile != 'default' and listening(port) and not _verified_record(info, name):
+            raise RuntimeError('This screen port has an unverified owner; it was preserved. Recover its assignment before continuing.')
+    if not listening(info["vncPort"]):
+        if profile == "default":
+            raise RuntimeError("The Orgo primary desktop is unavailable; recover the computer")
+        spawn(info, "display", ["Xvnc", info["display"], "-geometry", "1440x900", "-depth", "24",
+            "-rfbport", str(info["vncPort"]), "-localhost", "-SecurityTypes", "VncAuth",
+            "-PasswordFile", "/tmp/.vncpasswd", "-AlwaysShared", "-ac", "+render", "-noreset"])
+        wait_port(info["vncPort"])
+    managers = window_managers(info)
+    if len(managers) > 1:
+        raise RuntimeError('This screen has multiple window managers; it was preserved')
+    if managers:
+        write_json(Path(info['slotDirectory']) / 'window-manager.process.json', managers[0])
+    elif profile != 'default':
+        spawn(info, "window-manager", ["xfwm4", "--sm-client-disable"])
+    if not listening(info["wsPort"]):
+        spawn(info, "viewer", ["/usr/bin/websockify", f"127.0.0.1:{info['wsPort']}",
+                               f"127.0.0.1:{info['vncPort']}"])
+        wait_port(info["wsPort"])
+
+
+def prewarm(profile: str = 'default') -> dict:
+    """Prepare physical display/viewer slots without consuming an agent assignment."""
+    if not PROFILE.fullmatch(profile):
+        raise ValueError('Invalid agent profile')
+    computer = verify_binding(); base = root()
+    registry_path = base / 'screens.json'
+    registry = json.loads(registry_path.read_text()) if registry_path.exists() else {'default': 99}
+    by_display = {value: name for name, value in registry.items()}
+    prepared, failures = [], []
+    for display in range(100, 100 + capacity()['specialists']):
+        owner = by_display.get(display, f'slot-{display}')
+        info = _info(owner, display, computer)
+        try:
+            with locked(Path(info['slotDirectory']) / 'start.lock'):
+                _ensure_slot(info)
+            prepared.append(display)
+        except Exception as exc:
+            failures.append({'display': f':{display}', 'error': str(exc)[:250]})
+    return {'computerId': computer, 'profile': profile, 'prepared': len(prepared),
+            'capacity': capacity(), 'failures': failures}
+
+
+def ensure(profile: str, *, browser: bool = False, owner: str | None = None) -> dict:
     info = screen(profile)
-    lease(profile, 'reservation')
+    if owner:
+        lease(profile, owner)
     directory = Path(info["directory"])
-    start_guard = locked(directory / "start.lock")
+    start_guard = locked(Path(info['slotDirectory']) / "start.lock")
     with locked(root() / "registry.lock"):
         start_guard.__enter__()
         try:
@@ -221,26 +332,10 @@ def ensure(profile: str, *, browser: bool = False) -> dict:
             start_guard.__exit__(*sys.exc_info())
             raise
     try:
-        if profile != 'default':
-            for name, port in [('display', info['vncPort']), ('viewer', info['wsPort']), ('chrome', info['cdpPort'])]:
-                if listening(port):
-                    record = directory / (name + '.process.json')
-                    identity = json.loads(record.read_text()) if record.exists() else {}
-                    if not identity.get('start') or process_start(identity.get('pid', 0)) != identity['start']:
-                        raise RuntimeError('This screen port has an unverified owner; it was preserved. Recover its assignment before continuing.')
-        if not listening(info["vncPort"]):
-            if profile == "default":
-                raise RuntimeError("The Orgo primary desktop is unavailable; recover the computer")
-            spawn(info, "display", ["Xvnc", info["display"], "-geometry", "1440x900", "-depth", "24",
-                "-rfbport", str(info["vncPort"]), "-localhost", "-SecurityTypes", "VncAuth",
-                "-PasswordFile", "/tmp/.vncpasswd", "-AlwaysShared", "-ac", "+render", "-noreset"])
-            wait_port(info["vncPort"])
-            spawn(info, "window-manager", ["xfwm4", "--sm-client-disable"])
-        if not listening(info["wsPort"]):
-            spawn(info, "viewer", ["/usr/bin/websockify", f"127.0.0.1:{info['wsPort']}",
-                                   f"127.0.0.1:{info['vncPort']}"])
-            wait_port(info["wsPort"])
+        _ensure_slot(info)
         if browser:
+            if listening(info['cdpPort']) and not _verified_record(info, 'chrome'):
+                raise RuntimeError('This screen browser has an unverified owner; it was preserved. Recover its assignment before continuing.')
             if not listening(info["cdpPort"]):
                 spawn(info, "chrome", ["/usr/bin/google-chrome", "--no-sandbox", "--disable-dev-shm-usage",
                     "--no-first-run", "--no-default-browser-check", "--remote-debugging-address=127.0.0.1",
@@ -253,7 +348,8 @@ def ensure(profile: str, *, browser: bool = False) -> dict:
                     raise RuntimeError("Cloud browser debugging endpoint is unhealthy")
     finally:
         start_guard.__exit__(None, None, None)
-    return {**info, "paused": (directory / "paused").exists()}
+    return {**info, "paused": (directory / "paused").exists(), 'state': 'ready',
+            'mode': 'visible', 'capacity': capacity()}
 
 
 def process_start(pid: int) -> str | None:
@@ -328,8 +424,8 @@ def reconcile(profile: str) -> dict:
         if profile == 'default' or profile not in registry:
             return {'computerId':computer,'profile':profile,'reconciled':[]}
         display = registry[profile]; directory = base/profile
-        info = {'profile':profile,'display':f':{display}','vncPort':5900+display,'wsPort':6100+display,'cdpPort':9300+display,'directory':str(directory)}
-        with locked(directory/'start.lock'), locked(directory/'action.lock'):
+        info = _info(profile, display, computer)
+        with locked(Path(info['slotDirectory'])/'start.lock'), locked(directory/'action.lock'):
             identities = {}
             for service, key in [('display','vncPort'),('viewer','wsPort'),('chrome','cdpPort')]:
                 owners = port_owners(info[key])
@@ -346,7 +442,7 @@ def reconcile(profile: str) -> dict:
             backup.mkdir(mode=0o700,parents=True)
             write_json(backup/'assignment.json',{'computerId':computer,'profile':profile,'display':display})
             for service, identity in identities.items():
-                record = directory/(service+'.process.json')
+                record = _service_directory(info, service)/(service+'.process.json')
                 if record.exists(): write_json(backup/record.name,json.loads(record.read_text()))
                 write_json(record,identity)
     return {'computerId':computer,'profile':profile,'reconciled':sorted(identities),'backup':str(backup)}
@@ -367,6 +463,7 @@ def inspect(profile: str) -> dict:
         leases = directory / 'leases.json'
         held = json.loads(leases.read_text()) if leases.exists() else {}
         occupied.append({'agentId': name, 'display': f':{display}',
+                         'screenId': _screen_id(base, name, display, create=False),
                          'humanControl': (directory / 'paused').exists(),
                          'viewer': any(k.startswith('view-') and v > time.time() for k, v in held.items()),
                          'working': any(k.startswith('task-') and v > time.time() for k, v in held.items()),
@@ -377,14 +474,15 @@ def inspect(profile: str) -> dict:
         return {**result, 'state': 'waiting' if result['position'] else 'unassigned'}
     display = registry[profile]
     directory = base / profile
+    info = _info(profile, display, computer)
     for service, offset in [('display', 5900), ('viewer', 6100), ('chrome', 9300)]:
         if profile != 'default' and listening(offset + display):
-            record = directory / (service + '.process.json')
-            owner = json.loads(record.read_text()) if record.exists() else {}
-            if not owner.get('start') or process_start(owner.get('pid', 0)) != owner['start']:
+            if not _verified_record(info, service, promote=False):
                 return {**result, 'state': 'repair_needed', 'reason': 'unverified_owner',
                         'message': 'An existing screen service has no verified owner. Its work has been preserved; repair requires ownership reconciliation.'}
     return {**result, 'display': f':{display}', 'paused': (directory / 'paused').exists(),
+            'screenId': _screen_id(base, profile, display, create=False),
+            'wsPort': 6100 + display, 'mode': 'visible',
             'state': 'ready' if listening(5900 + display) and listening(6100 + display) else 'starting'}
 
 
@@ -392,6 +490,10 @@ def validate_assignment(info: dict) -> None:
     path = root() / "screens.json"
     state = json.loads(path.read_text()) if path.exists() else {"default": 99}
     if state.get(info['profile']) != int(info['display'][1:]):
+        raise RuntimeError("Screen assignment changed; reacquire this agent's screen")
+    expected = info.get('screenId')
+    current = _screen_id(root(), info['profile'], int(info['display'][1:]), create=False)
+    if expected and current != expected:
         raise RuntimeError("Screen assignment changed; reacquire this agent's screen")
 
 
@@ -451,54 +553,70 @@ def release(profile: str) -> bool:
         if profile not in state:
             return True
         display = state[profile]
-        with locked(directory / 'start.lock'), locked(directory / 'action.lock'):
+        info = _info(profile, display, verify_binding())
+        with locked(Path(info['slotDirectory']) / 'start.lock'), locked(directory / 'action.lock'):
             if (directory / 'paused').exists():
                 return False
             leases = directory / 'leases.json'
-            if leases.exists() and any(v > time.time() for v in json.loads(leases.read_text()).values()):
+            held = json.loads(leases.read_text()) if leases.exists() else {}
+            held = {key: value for key, value in held.items() if value > time.time()}
+            if held:
+                write_json(leases, held)
                 return False
-            for name in ('viewer', 'chrome', 'window-manager', 'display'):
-                record = directory / (name + '.process.json')
-                if not record.exists():
-                    continue
-                identity = json.loads(record.read_text())
-                pid = identity['pid']
-                if identity.get('start') and process_start(pid) == identity['start']:
-                    try:
-                        os.killpg(pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
+            # Keep the physical display, window manager and viewer prewarmed.
+            # Only this profile's Chrome process is private to the assignment.
+            record = directory / 'chrome.process.json'
+            identity = _verified_record(info, 'chrome', promote=False)
+            if listening(info['cdpPort']) and not identity:
+                return False
+            if identity:
+                try:
+                    os.killpg(identity['pid'], signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
             deadline = time.monotonic() + 8
-            while any(listening(offset + display) for offset in (5900, 6100, 9300)):
+            while listening(info['cdpPort']):
                 if time.monotonic() >= deadline:
-                    # Keep ownership if anything remains. Never repurpose a live port.
+                    # Keep ownership if Chrome remains. Never repurpose a live
+                    # authenticated browser port.
                     return False
                 time.sleep(.1)
+            record.unlink(missing_ok=True)
             del state[profile]
             write_json(path, state)
+            identity_path, identities = _identities(base)
+            identities.pop(profile, None)
+            write_json(identity_path, identities)
+            leases.unlink(missing_ok=True)
             return True
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=["status", "repair", "capacity", "ensure", "pause", "resume", "hold", "drop", "cancel"])
+    parser.add_argument("operation", choices=["status", "repair", "capacity", "prewarm", "ensure", "pause", "resume", "hold", "drop", "release", "cancel"])
     parser.add_argument("profile")
     parser.add_argument("owner", nargs='?', default='viewer')
     args = parser.parse_args()
     if args.operation == 'repair':
         result = reconcile(args.profile)
+    elif args.operation == 'prewarm':
+        result = prewarm(args.profile)
     elif args.operation == 'capacity':
         result = configure_capacity(args.profile, args.owner)
     elif args.operation in {'hold', 'drop'}:
         held = lease(args.profile, args.owner, 30 if args.operation == 'hold' else 0)
-        result = {**(screen(args.profile) if held and args.operation == 'hold' else {}), 'held': held, 'computerId': verify_binding(), 'profile': args.profile}
+        released = release(args.profile) if args.operation == 'drop' else False
+        result = {**(screen(args.profile) if held and args.operation == 'hold' else {}), 'held': held,
+                  'released': released, 'computerId': verify_binding(), 'profile': args.profile}
+    elif args.operation == 'release':
+        result = {'released': release(args.profile), 'computerId': verify_binding(), 'profile': args.profile}
     elif args.operation == 'cancel':
         cancel_wait(args.profile)
         result = {'cancelled': True, 'computerId': verify_binding(), 'profile': args.profile}
     elif args.operation in {"pause", "resume"}:
         result = control(args.profile, args.operation == "pause")
     elif args.operation == "ensure":
-        try: result = ensure(args.profile)
+        try: result = ensure(args.profile, browser=True, owner=args.owner)
         except ScreenBusy as exc:
             result = {'queued': True, 'position': exc.position, 'capacity': capacity(), 'computerId': verify_binding(), 'profile': args.profile}
     else:

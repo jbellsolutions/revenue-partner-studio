@@ -5,6 +5,7 @@ Original profile configuration and the rollback applications are unchanged.
 """
 import os
 from pathlib import Path
+import sys
 
 
 def legacy_screen(name):
@@ -28,6 +29,12 @@ def browser_authorized(config):
         for name,value in (config.get('mcp_servers') or {}).items())
 
 
+def local_headless():
+    """Studio overflow is host-local and can never auto-select a paid cloud."""
+    return (sys.platform == 'linux' and os.environ.get('HERMES_STUDIO_RUNTIME') == '1'
+            and os.environ.get('BROWSER_BACKEND', 'local') == 'local')
+
+
 def mcp_servers(config, servers):
     if os.environ.get('HERMES_STUDIO_RUNTIME')!='1':return servers
     result={name:value for name,value in servers.items() if not legacy_screen(name) and name!='orgo-screen'}
@@ -44,8 +51,10 @@ def tool_selection(config, enabled):
     if os.environ.get('HERMES_STUDIO_RUNTIME')!='1':return enabled,None
     if enabled is not None:
         enabled=[name for name in enabled if not legacy_screen(name)]
-        if browser_authorized(config):enabled=sorted(set(enabled)|{'orgo-screen'})
+        if browser_authorized(config):enabled=sorted(set(enabled)|{'orgo-screen'}|({'browser'} if local_headless() else set()))
     # Hermes applies disabled toolsets after expanding aliases such as hermes-cli.
     # Thus imported aliases cannot retain an invisible generic browser route.
     disabled=(config.get('agent') or {}).get('disabled_toolsets') or []
-    return enabled,sorted(set(disabled)|{'browser','desktop_ui','computer_use'})
+    blocked={'desktop_ui','computer_use'}
+    if not local_headless(): blocked.add('browser')
+    return enabled,sorted(set(disabled)|blocked)

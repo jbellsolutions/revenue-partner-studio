@@ -108,6 +108,24 @@ export function reduceEvent(space: Space, event: any): Space {
   if (event.kind === 'runtime.connected') return runtimeHealth(next, { runtimeConnected: true, eventCursor: event.seq, epoch: event.payload?.epoch })
   if (event.kind === 'peer.changed' || event.kind === 'peer.approval_required')
     return { ...next, peerRevision: event.seq }
+  if (event.kind.startsWith('screen.') && event.agentId) {
+    const key = space.selected[event.agentId] || Object.keys(space.conversations).find(k => k.startsWith(event.agentId + '/'))
+    if (!key || !space.conversations[key]) return next
+    const p = event.payload || {}
+    const content: Record<string, string> = {
+      'screen.assigned': `Screen assigned${p.display ? ` on ${p.display}` : ''}. Preparing the private browser workspace.`,
+      'screen.waiting': `Waiting for a visible screen${p.position ? ` · queue position ${p.position}` : ''}. Chat and headless-safe work remain available.`,
+      'screen.live': 'Screen is live and linked to this agent.',
+      'screen.headless': 'Working headlessly on this Orgo computer. No visible screen slot or paid cloud browser is being used.',
+      'screen.released': p.released ? 'Viewer lease released. The private browser workspace was preserved.' : 'Viewer closed; active work kept the screen lease.',
+      'screen.failed': `Screen connection needs attention${p.error ? `: ${p.error}` : '.'}`,
+      'screen.prewarm_failed': 'The computer could not prewarm every screen slot. Open diagnostics for details.'
+    }
+    if (!content[event.kind]) return next
+    const c = space.conversations[key]
+    return { ...next, conversations: { ...space.conversations, [key]: { ...c,
+      messages: [...c.messages, { id: 'event-' + event.seq, role: 'system', content: content[event.kind] }] } } }
+  }
   if (event.kind === 'studio.task') {
     const task = event.payload
     const conversations = Object.fromEntries(

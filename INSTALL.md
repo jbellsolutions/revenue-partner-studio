@@ -1,16 +1,24 @@
 # Install Revenue Partner Studio by Your AI Guy
 
-This is the **browser-first** installation path for v0.2.0-beta.2. The coding assistant performs the commands and configuration. The owner completes account sign-in and approves concrete costs. Read [Before You Start](docs/BEFORE-YOU-START.md) first and use the [complete setup prompt](docs/SETUP-PROMPT.txt).
+This is the **browser-first** installation path for v0.2.0-beta.3. The coding assistant performs the commands and configuration. The owner completes account sign-in and approves concrete costs. Read [Before You Start](docs/BEFORE-YOU-START.md) first and use the [complete setup prompt](docs/SETUP-PROMPT.txt).
 
 ## 1. Prepare an independent release copy
 
-Use a new folder, not another product’s checkout or a linked worktree. Clone the public repository, check out `v0.2.0-beta.2`, and read AGENTS.md. Verify the release SHA-256 checksums if using packaged downloads. Install Git, Node 22.22+ (24 recommended) and npm with the owner’s existing package manager. Install the Railway CLI if absent. Use an existing authenticated Railway account or initiate its supported login flow.
+Use a new folder, not another product’s checkout or a linked worktree. Clone the public repository, check out `v0.2.0-beta.3`, and read AGENTS.md. Verify the release SHA-256 checksums if using packaged downloads. Install Git, Node 22.22+ (24 recommended) and npm with the owner’s existing package manager. Install the Railway CLI if absent. Use an existing authenticated Railway account or initiate its supported login flow.
 
 ```sh
 node distribution/setup.mjs preflight
 ```
 
 This checks tools and Railway authentication without purchasing anything. State lives in ignored `.revenue-partner-studio/`, directory mode 700 and files mode 600. Keep this folder private and backed up. It contains the generated password and resumable resource receipts. A second install from the same folder resumes the first. Use `status` to inspect non-secret progress.
+
+For a new client, prefer the guided driver after saving the destination file described below. It resumes at the first incomplete stage and never stores provider or Orgo keys in its journal:
+
+```sh
+node distribution/setup.mjs guided --config .revenue-partner-studio/destination.json
+```
+
+The assistant adds only the approval flags that match approvals already given for resources, credential destinations and the real verification task. Individual stages below remain available for diagnosis and recovery.
 
 ## 2. Resolve the owner’s destination and costs
 
@@ -95,3 +103,5 @@ Use the reviewed import controls to select a source profile, destination compute
 ## Finish and maintain
 
 Deliver the owner’s private app URL, securely stored password, chosen computer/profile/provider, verification results and backup location. Explain only remaining account decisions or limitations; do not hand back technical chores. Use [operations](docs/OPERATIONS.md) for updates, backups, restoration and uninstall. Keep rollback clients until actual acceptance passes.
+
+Create a sanitized support package at any time with `node distribution/setup.mjs support`. It contains versions, hashed destination identities and check results, without credentials or conversation content. Before an update, use `node distribution/setup.mjs backup`; after reviewing the release and approving the destination, use `node distribution/setup.mjs update --approve-update`. The update resumes by its recorded release marker, updates one selected computer, verifies readiness and leaves the previous extension available for automatic restoration if readiness fails.

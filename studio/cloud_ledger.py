@@ -56,9 +56,9 @@ class Ledger:
             raise ValueError('Open this agent conversation before using it')
         return dict(row)
 
-    def event(self, kind, payload, runtime=None):
+    def event(self, kind, payload, runtime=None, agent=None):
         row = self.db.execute('SELECT * FROM sessions WHERE runtime=?', (runtime,)).fetchone()
-        agent = row['agent'] if row else None
+        agent = row['agent'] if row else agent
         result = self.db.execute('INSERT INTO events(agent,session,kind,payload,created) VALUES(?,?,?,?,?)',
                                  (agent, runtime, kind, json.dumps(payload), time.time()))
         return {'seq': result.lastrowid, 'agentId': agent, 'runtimeId': runtime,

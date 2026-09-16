@@ -6,7 +6,6 @@ export const Screen = memo(function Screen({
   enabled,
   agentName,
   computerName,
-  diagnostics = false,
   onRepair
 }: {
   computer: string
@@ -22,7 +21,7 @@ export const Screen = memo(function Screen({
     frame = useRef<HTMLElement>(null)
   const [controlling, setControlling] = useState(false)
   const [error, setError] = useState(''),
-    [status, setStatus] = useState('Starting'),
+    [status, setStatus] = useState('Preparing screen'),
     [paused, setPaused] = useState(false),
     [attempt, setAttempt] = useState(0),
     [stopped, setStopped] = useState(false)
@@ -34,31 +33,26 @@ export const Screen = memo(function Screen({
   useEffect(() => {
     let disposed = false
     let reconnect: ReturnType<typeof setTimeout> | undefined
-    setStatus(previous => enabled ? previous === 'Waiting for capacity' ? previous : 'Starting' : 'Unavailable')
+    let opened: { screenSessionId: string; screenId: string } | undefined
+    setStatus(previous => enabled ? previous === 'Waiting for screen' ? previous : 'Preparing screen' : 'Unavailable')
     if (!enabled || stopped) return
     void (async () => {
       try {
-        if (diagnostics) {
-          const health = await rpc(computer, 'screen.status', { agentId: agent })
-          if (disposed) return
-          setScreenInfo(health)
-          if (health.state === 'repair_needed') {
-            setStatus('Repair needed'); setError(health.message); return
-          }
-        }
         const [info, module] = await Promise.all([
           rpc(computer, 'screen.open', { agentId: agent }),
           import('@novnc/novnc')
         ])
         if (disposed || !surface.current) return
+        setScreenInfo(info)
         if (info.queued) {
-          setStatus('Waiting for capacity')
+          setStatus('Waiting for screen')
           setError(
             `All ${info.capacity?.specialists || 4} specialist screens are assigned. Your place in the queue: ${info.position}. Chat stays available.`
           )
-          reconnect = setTimeout(() => setAttempt(v => v + 1), 2000)
+          reconnect = setTimeout(() => setAttempt(v => v + 1), info.retryAfterMs || 1500)
           return
         }
+        opened = { screenSessionId: info.screenSessionId, screenId: info.screenId }
         const url = new URL(info.url, location.origin)
         url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
         const client = new module.default(surface.current, url.href, { credentials: { password: info.password || '' } })
@@ -85,10 +79,13 @@ export const Screen = memo(function Screen({
         })
       } catch (e) {
         if (!disposed) {
-          setError(String((e as Error).message))
+          const message = String((e as Error).message)
+          setError(message)
           failures.current += 1
-          setStatus(failures.current >= 3 ? 'Repair needed' : 'Disconnected')
-          if (failures.current < 3) reconnect = setTimeout(() => setAttempt(v => v + 1), 2000)
+          const repair = /unverified owner|repair/i.test(message)
+          if (repair) setScreenInfo({ state: 'repair_needed', reason: 'unverified_owner' })
+          setStatus(repair || failures.current >= 3 ? 'Repair needed' : 'Disconnected')
+          if (!repair && failures.current < 3) reconnect = setTimeout(() => setAttempt(v => v + 1), 2000)
         }
       }
     })()
@@ -97,8 +94,10 @@ export const Screen = memo(function Screen({
       clearTimeout(reconnect)
       rfb.current?.disconnect()
       rfb.current = null
+      if (opened)
+        void rpc(computer, 'screen.release', { agentId: agent, ...opened }).catch(() => {})
     }
-  }, [computer, agent, enabled, attempt, stopped, diagnostics])
+  }, [computer, agent, enabled, attempt, stopped])
   useEffect(
     () => () => {
       void rpc(computer, 'screen.cancel_wait', { agentId: agent }).catch(() => {})
@@ -149,10 +148,10 @@ export const Screen = memo(function Screen({
           <div className="screen-placeholder">
             <span className="screen-glyph">▱</span>
             <strong>
-              {status === 'Starting'
-                ? 'Connecting to your screen'
+              {status === 'Preparing screen'
+                ? 'Preparing your screen'
                 : enabled
-                  ? status === 'Waiting for capacity'
+                  ? status === 'Waiting for screen'
                     ? 'Waiting for a screen'
                     : status === 'Repair needed' ? 'Screen needs repair' : 'Screen disconnected'
                   : 'Screen setup needed'}
@@ -176,7 +175,7 @@ export const Screen = memo(function Screen({
             {status === 'Repair needed' && screenInfo?.reason === 'unverified_owner' &&
               <button disabled={repairing} onClick={() => void repair()}>{repairing ? 'Checking ownership…' : 'Repair screen ownership'}</button>}
             {status === 'Repair needed' && onRepair && <button onClick={onRepair}>Repair computer connection</button>}
-            {status === 'Waiting for capacity' && !stopped && (
+            {status === 'Waiting for screen' && !stopped && (
               <button
                 onClick={() => {
                   setStopped(true)
@@ -195,7 +194,7 @@ export const Screen = memo(function Screen({
           {error}
         </p>
       )}
-      {status === 'Waiting for capacity' && screenInfo?.occupied && <details className="screen-owners"><summary>Which agents have screens?</summary>
+      {status === 'Waiting for screen' && screenInfo?.occupied && <details className="screen-owners"><summary>Which agents have screens?</summary>
         {screenInfo.occupied.filter((owner: any) => owner.agentId !== 'default').map((owner: any) => <p key={owner.agentId}>
           {owner.agentId.replaceAll('-', ' ')} · {owner.humanControl ? 'Human control' : owner.working ? 'Working' : owner.viewer ? 'Being watched' : owner.legacyOwnership ? 'Ownership needs review' : 'Finishing screen lease'}
         </p>)}
