@@ -239,13 +239,20 @@ def _verified_record(info: dict, name: str, *, promote: bool = True) -> dict | N
     for record in _record_candidates(info, name):
         if not record.exists():
             continue
-        value = json.loads(record.read_text())
-        if value.get('start') and process_start(value.get('pid', 0)) == value['start']:
-            identity = managed_identity(info, name, value['pid'])
-            primary = _service_directory(info, name) / (name + '.process.json')
-            if promote and record != primary:
-                write_json(primary, identity)
-            return identity
+        try:
+            value = json.loads(record.read_text())
+            if value.get('start') and process_start(value.get('pid', 0)) == value['start']:
+                identity = managed_identity(info, name, value['pid'])
+                primary = _service_directory(info, name) / (name + '.process.json')
+                if promote and record != primary:
+                    write_json(primary, identity)
+                return identity
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError):
+            # A Chrome launcher can exit after handing the port to its child,
+            # leaving a stale or briefly empty /proc command. Treat the saved
+            # record as unverified. Callers still refuse to reuse a listening
+            # port, while a closed port can be safely reassigned.
+            continue
     return None
 
 
@@ -319,7 +326,14 @@ def prewarm(profile: str = 'default') -> dict:
 
 
 def ensure(profile: str, *, browser: bool = False, owner: str | None = None) -> dict:
-    info = screen(profile)
+    try:
+        info = screen(profile)
+    except ScreenBusy:
+        # screen() has recorded this request in the FIFO queue. Reclaim at most
+        # one expired viewer-only assignment, then retry the same request. Task
+        # and human-control leases remain protected by release().
+        reclaim_idle()
+        info = screen(profile)
     if owner:
         lease(profile, owner)
     directory = Path(info["directory"])

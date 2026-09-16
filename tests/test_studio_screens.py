@@ -52,6 +52,23 @@ def test_live_port_prevents_reassignment_and_pid_reuse_never_killed(registry, mo
     assert screens.screen('researcher')['display'] == info['display']
 
 
+def test_stale_browser_record_is_bounded_by_the_actual_listener(registry, monkeypatch):
+    info = screens.screen('researcher')
+    record = Path(info['directory'])/'chrome.process.json'
+    record.write_text(json.dumps({'pid': 42, 'start': 'live'}))
+    monkeypatch.setattr(screens, 'process_start', lambda pid: 'live')
+    monkeypatch.setattr(screens, 'managed_identity', lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('empty command')))
+    monkeypatch.setattr(screens.os, 'killpg', lambda *args: pytest.fail('must not signal an unverified process'))
+    monkeypatch.setattr(screens, 'listening', lambda port: False)
+    assert screens.release('researcher') is True
+
+    screens.screen('researcher')
+    record.write_text(json.dumps({'pid': 42, 'start': 'live'}))
+    monkeypatch.setattr(screens, 'listening', lambda port: port == info['cdpPort'])
+    assert screens.release('researcher') is False
+    assert screens.screen('researcher')['display'] == info['display']
+
+
 def test_four_specialists_fifo_wait_cancel_and_viewer_task_leases(registry):
     first=screens.screen('a'); screens.screen('b'); screens.screen('c'); screens.screen('d')
     assert len({screens.screen(p)['display'] for p in ('a','b','c','d')})==4
@@ -78,6 +95,16 @@ def test_expired_viewer_lease_allows_reclaim_but_human_control_does_not(registry
     state=json.loads((registry/'screens.json').read_text())
     assert 'a' not in state and 'b' in state
     assert screens.screen('waiting')['display']==':100'
+
+
+def test_ensure_reclaims_one_idle_assignment_after_joining_fifo(registry, monkeypatch):
+    first = screens.screen('a')
+    for profile in ('b', 'c', 'd'):
+        screens.screen(profile)
+    monkeypatch.setattr(screens, '_ensure_slot', lambda info: None)
+    replacement = screens.ensure('waiting')
+    assert replacement['display'] == first['display']
+    assert 'a' not in json.loads((registry/'screens.json').read_text())
 
 
 def test_diagnostics_never_allocate_start_or_extend_a_lease(registry, monkeypatch):
