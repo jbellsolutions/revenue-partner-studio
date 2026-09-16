@@ -317,7 +317,17 @@ def _ensure_slot(info: dict) -> None:
         # the computer image. Specialist slots must always have an exact local
         # process identity before they can be reused.
         if profile != 'default' and listening(port) and not _verified_record(info, name):
-            raise RuntimeError('This screen port has an unverified owner; it was preserved. Recover its assignment before continuing.')
+            owners = port_owners(port)
+            try:
+                if len(owners) != 1:
+                    raise RuntimeError('unknown owner')
+                identity = managed_identity(info, name, next(iter(owners)))
+            except (OSError, RuntimeError):
+                raise RuntimeError('This screen port has an unverified owner; it was preserved. Recover its assignment before continuing.')
+            # Physical slots outlive profile assignments. Older releases kept
+            # these records under the former profile; adopt only an exact
+            # display/port/process match into the slot-scoped registry.
+            write_json(_service_directory(info, name)/(name+'.process.json'), identity)
     if not listening(info["vncPort"]):
         if profile == "default":
             raise RuntimeError("The Orgo primary desktop is unavailable; recover the computer")

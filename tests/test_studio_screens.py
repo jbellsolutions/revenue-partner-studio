@@ -237,3 +237,23 @@ def test_prewarm_does_not_assign_agents_or_start_private_browsers(registry, monk
     assert {row['display'] for row in prepared} == {':100', ':101', ':102', ':103'}
     assert not (registry/'screens.json').exists()
     assert not list(registry.glob('slot-*/browser'))
+
+
+def test_reassigned_slot_adopts_only_exact_legacy_display_services(registry, monkeypatch):
+    info = screens.screen('new-owner')
+    live = {info['vncPort'], info['wsPort']}
+    monkeypatch.setattr(screens, 'listening', lambda port: port in live)
+    monkeypatch.setattr(screens, '_verified_record', lambda *args, **kwargs: None)
+    monkeypatch.setattr(screens, 'port_owners', lambda port: {port})
+    monkeypatch.setattr(screens, 'managed_identity', lambda _info, name, pid: {'pid': pid, 'start': name})
+    monkeypatch.setattr(screens, 'window_managers', lambda _info: [{'pid': 9, 'start': 'window-manager'}])
+    monkeypatch.setattr(screens, 'spawn', lambda *args: pytest.fail('exact live services should be adopted'))
+    screens._ensure_slot(info)
+    slot = Path(info['slotDirectory'])
+    assert json.loads((slot/'display.process.json').read_text()) == {'pid': info['vncPort'], 'start': 'display'}
+    assert json.loads((slot/'viewer.process.json').read_text()) == {'pid': info['wsPort'], 'start': 'viewer'}
+
+    (slot/'display.process.json').unlink()
+    monkeypatch.setattr(screens, 'managed_identity', lambda *args: (_ for _ in ()).throw(RuntimeError('wrong display')))
+    with pytest.raises(RuntimeError, match='unverified owner'):
+        screens._ensure_slot(info)
