@@ -1,5 +1,9 @@
 ## Unreleased — screen and local recovery
 
+- Computer-wide conversation search across every Hermes profile, preserved import and recognized older Studio/Hermes store, with source/date/profile filters and exact resume links.
+- Explicit legacy-conversation recovery copies only the selected conversation into its owning native profile, preserves provenance and conflicts, and leaves the older database unchanged.
+- Agent-initiated history lookup is restricted to the running profile and appears as structured, openable Studio cards.
+- Permission-directory persistence is detached from the transport heartbeat, unchanged revisions avoid redundant disk writes, and sanitized connection-lag diagnostics support recovery analysis.
 - Read-only screen ownership diagnostics, explicit capacity/repair states and bounded viewer reconnects; chat stays independent of viewer failure.
 - Profile-aware conversation recovery, runtime-epoch checks and background dispatch for slow Mac operations.
 - Simple Hermes settings and Advanced reasoning, tool restrictions and turn limits, with changed-field saves, conflict detection and between-turn activation.

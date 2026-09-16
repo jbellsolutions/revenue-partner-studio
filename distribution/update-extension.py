@@ -85,7 +85,7 @@ def verify_runtime(cfg):
                     message = json.loads(ws.recv(timeout=max(.01, response_deadline-time.monotonic())))
                     if message.get('id') != request: continue
                     result = message.get('result', {})
-                    if result.get('sessionRecovery') and result.get('profileSettings') and result.get('extensionVersion') == 'screens-recovery-2': return
+                    if result.get('sessionRecovery') and result.get('profileSettings') and result.get('historySearch') and result.get('extensionVersion') == 'history-recovery-3': return
                     raise RuntimeError('The installed extension did not report the required capabilities')
         except Exception as exc:
             last_error = type(exc).__name__
@@ -95,6 +95,7 @@ def verify_runtime(cfg):
 
 def payload(source, target, kind):
     names = sorted(str(p.relative_to(source)) for p in (source/'studio').glob('*.py'))
+    names += ['tools/studio_tools.py']
     names += ['distribution/local-launch.py'] if kind == 'local' else [
         'hermes_cli/orgo_screens.py', 'hermes_cli/orgo_screen_mcp.py', 'distribution/screen-control.py']
     if not names or 'studio/cloud_connector.py' not in names:
@@ -135,7 +136,7 @@ def update(configuration, source, apply=False, setup_job=None):
     task_store = home/('studio/workspace.sqlite3' if kind == 'local' else 'studio-cloud/runtime/workspace.sqlite3')
     queued = pending(task_store)
     result = {'computerId': cfg['computerId'], 'files': len(files), 'pendingTasks': queued,
-              'ready': queued == 0, 'revision': 'screens-recovery-2'}
+              'ready': queued == 0, 'revision': 'history-recovery-3'}
     if not apply: return result
     if queued: raise RuntimeError('Studio has accepted work. Wait for it to finish before updating')
     os.umask(0o077)

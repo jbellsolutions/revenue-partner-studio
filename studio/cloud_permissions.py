@@ -30,7 +30,16 @@ def record(home):
 def receive(home,computer,proof,token):
     value=verify(proof,token)
     if value.get('computerId')!=computer or value.get('validUntil',0)<time.time()*1000:raise PermissionError('Studio permission directory is stale or belongs to another computer.')
-    atomic_write(Path(home)/'studio-cloud/permissions.json',json.dumps(value).encode())
+    path=Path(home)/'studio-cloud/permissions.json'
+    try: previous=json.loads(path.read_text())
+    except (FileNotFoundError,ValueError,OSError): previous={}
+    # Reconnect/admission can repeat an unchanged directory. Keep the newer
+    # durable lease when it still has ample life instead of fsyncing it again.
+    if (previous.get('revision')==value.get('revision') and
+            previous.get('validUntil',0)>time.time()*1000+35000):
+        return {'revision':value.get('revision',''),'written':False}
+    atomic_write(path,json.dumps(value,separators=(',',':')).encode())
+    return {'revision':value.get('revision',''),'written':True}
 
 def accept(home,computer,p,token,task):
     value=verify(p.get('authorization') or {},token)

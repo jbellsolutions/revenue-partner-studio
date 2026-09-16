@@ -33,6 +33,7 @@ type Pending = {
 type Viewer = { id: string; socket: WebSocket; computer: string; cursor: number; replaying: boolean; buffer: any[] }
 type Client = WebSocket & {
   pingSentAt?: number
+  lastPingRtt?: number
   sessionToken?: string
   transport?: { computer: string; admitted: boolean; opened: number; lastPong: number; lastMessage?: number; cause: string }
 }
@@ -54,6 +55,8 @@ const METHODS = new Set([
   'providers.configure',
   'providers.check',
   'sessions.list',
+  'sessions.search',
+  'sessions.sources',
   'sessions.archives',
   'sessions.open',
   'sessions.history',
@@ -355,6 +358,13 @@ export function createGateway(options: Options) {
     wss.handleUpgrade(req, socket, head, async ws => {
       ws.on('error', () => {})
       ws.on('pong', () => {
+        if ((ws as Client).pingSentAt !== undefined) {
+          const rtt = performance.now() - (ws as Client).pingSentAt!
+          ;(ws as Client).lastPingRtt = rtt
+          if (rtt >= 1000 && (ws as Client).transport)
+            console.info(JSON.stringify({event:'studio.connector.slow_pong',at:Date.now(),
+              computerId:(ws as Client).transport!.computer,durationMs:Math.round(rtt)}))
+        }
         ;(ws as Client).pingSentAt = undefined
         if ((ws as Client).transport) (ws as Client).transport!.lastPong = performance.now()
       })
@@ -490,6 +500,11 @@ export function createGateway(options: Options) {
                 computerId: computer,
                 computers: store.computers().map(c => ({ ...c, online: connectors.has(c.id) }))
               })
+            if (m.type === 'diagnostic' && m.name === 'permission.applied') {
+              const durationMs = Math.max(0, Math.min(60000, Number(m.durationMs) || 0))
+              console.info(JSON.stringify({event:'studio.connector.permission_applied',at:Date.now(),computerId:computer,
+                durationMs,written:!!m.written,revision:String(m.revision||'').slice(0,64)}))
+            }
           } catch {
             transport.cause = 'invalid_frame'
             ws.close(1008, 'Invalid connector frame')
@@ -592,8 +607,12 @@ export function createGateway(options: Options) {
       }
     })
   })
+  let heartbeatExpected = performance.now() + 2000
   const heartbeat = setInterval(() => {
-    publishPermissions()
+    const now = performance.now(), eventLoopLagMs = Math.max(0, now - heartbeatExpected)
+    heartbeatExpected = now + 2000
+    if (eventLoopLagMs >= 250)
+      console.info(JSON.stringify({event:'studio.gateway.event_loop_lag',at:Date.now(),durationMs:Math.round(eventLoopLagMs)}))
     for (const client of wss.clients) {
       const c = client as Client
       if (sessions.has(c) && !store.authenticated(sessions.get(c)!)) {
@@ -616,6 +635,9 @@ export function createGateway(options: Options) {
     }
     for (const [k, t] of tickets) if (t.expires < Date.now() && !t.browser && !t.remote) tickets.delete(k)
   }, 2000)
+  // Permission state changes are pushed immediately above. The periodic
+  // lease renewal is intentionally separate from transport liveness.
+  const permissionRefresh = setInterval(publishPermissions, 30000)
   return {
     server,
     store,
@@ -629,6 +651,7 @@ export function createGateway(options: Options) {
       computers.close()
       transfers.close()
       clearInterval(heartbeat)
+      clearInterval(permissionRefresh)
       for (const p of pending.values()) {
         clearTimeout(p.timer)
         p.reject(new Error('Gateway stopping'))

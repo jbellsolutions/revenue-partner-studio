@@ -263,3 +263,112 @@ async def test_unused_sessions_and_verified_legacy_delivery_histories_do_not_bre
     c.rpc = AsyncMock(side_effect=[{'transportRecovery': True}, {'recovered': []}])
     result = await c.operation('connection.reconcile', {}, 'check')
     assert result['reconciled'] is False and result['needsReview'] == 1
+
+
+def _saved_conversation(path, session, text, source='studio', title=None):
+    from hermes_state import SessionDB
+    db = SessionDB(db_path=path)
+    db.create_session(session, source)
+    db.append_message(session, 'user', text)
+    if title:
+        db.set_session_title(session, title)
+    db.close()
+
+
+def test_history_search_reaches_old_conversations_and_every_profile(tmp_path):
+    from hermes_state import SessionDB
+    c = connector(tmp_path)
+    default = SessionDB(db_path=c.home / 'state.db')
+    for index in range(80):
+        sid = f'default-{index:03d}'
+        default.create_session(sid, 'desktop')
+        default.append_message(sid, 'user', 'quarterly plan' if index == 0 else f'routine {index}')
+    default.close()
+    other = c.home / 'profiles' / 'revenue'; other.mkdir(parents=True)
+    (other / 'config.yaml').write_text('model: test\n')
+    _saved_conversation(other / 'state.db', 'revenue-old', 'quarterly plan from revenue', 'slack')
+
+    result = c.history_catalog.search({'query': 'quarterly plan'})
+    assert {(row['profileId'], row['sessionId']) for row in result['results']} == {
+        ('default', 'default-000'), ('revenue', 'revenue-old')}
+    assert result['searchedProfiles'] == 2
+    assert all(row['ref']['computerId'] == c.computer for row in result['results'])
+    assert c.history_catalog.search({'query': 'quarterly plan', 'sources': ['slack']})['results'][0]['profileId'] == 'revenue'
+    assert c.history_catalog.search({'query': 'quarterly plan', 'profiles': ['default']})['results'][0]['sessionId'] == 'default-000'
+
+    from studio.cloud_history import search_profile
+    own = search_profile(c.home, c.computer, 'revenue', 'quarterly plan')
+    assert [row['sessionId'] for row in own['results']] == ['revenue-old']
+
+
+@pytest.mark.asyncio
+async def test_exact_history_reference_reopens_its_owning_profile(tmp_path):
+    c = connector(tmp_path)
+    _saved_conversation(c.home / 'state.db', 'saved', 'Resume this exact work')
+    match = c.history_catalog.search({'query': 'exact work'})['results'][0]
+    c.rpc = AsyncMock(return_value={'session_id': 'runtime', 'stored_session_id': 'saved'})
+
+    result = await c.operation('sessions.open', {
+        'agentId': 'default', 'conversationId': 'browser-card', 'conversationRef': match['ref']}, 'open')
+
+    assert result['sessionId'] == 'saved' and result['profileId'] == 'default'
+    assert result['messages'][0]['content'] == 'Resume this exact work'
+    assert c.rpc.await_args_list[0].args[0] == 'session.resume'
+    assert c.rpc.await_args_list[0].args[1]['session_id'] == 'saved'
+
+
+@pytest.mark.asyncio
+async def test_legacy_history_recovery_preserves_source_and_collision(tmp_path):
+    import hashlib
+    import sqlite3
+    c = connector(tmp_path)
+    _saved_conversation(c.home / 'state.db', 'shared-id', 'Current Studio conversation')
+    legacy = tmp_path / 'AI Guy Desktop'; legacy.mkdir()
+    _saved_conversation(legacy / 'state.db', 'shared-id', 'Older app revenue conversation', 'desktop', 'Revenue notes')
+    before = hashlib.sha256((legacy / 'state.db').read_bytes()).hexdigest()
+    match = next(row for row in c.history_catalog.search({'query': 'Older app revenue'})['results']
+        if row['storeKind'] == 'legacy')
+    async def resume(_method, params):
+        return {'session_id': 'runtime', 'stored_session_id': params['session_id']}
+    c.rpc = AsyncMock(side_effect=resume)
+
+    result = await c.operation('sessions.open', {
+        'agentId': 'default', 'conversationId': 'legacy-card',
+        'conversationRef': match['ref'], 'resumeMode': 'exact'}, 'recover')
+
+    assert result['sessionId'].startswith('shared-id-import-')
+    assert result['messages'][0]['content'] == 'Older app revenue conversation'
+    with sqlite3.connect(c.home / 'state.db') as db:
+        source, origin, profile = db.execute(
+            'SELECT source,origin_json,profile_name FROM sessions WHERE id=?', (result['sessionId'],)).fetchone()
+    assert source == 'studio-import' and profile == 'default'
+    assert json.loads(origin)['sourceSession'] == 'shared-id'
+    assert hashlib.sha256((legacy / 'state.db').read_bytes()).hexdigest() == before
+    # Reopening the same card is idempotent and reuses the recovered identity.
+    again = await c.operation('sessions.open', {
+        'agentId': 'default', 'conversationRef': match['ref'], 'resumeMode': 'exact'}, 'recover-again')
+    assert again['sessionId'] == result['sessionId']
+
+
+@pytest.mark.asyncio
+async def test_slow_permission_persistence_never_blocks_connector_reader(tmp_path, monkeypatch):
+    import asyncio
+    import time
+    c = connector(tmp_path)
+    c.cloud_send = AsyncMock()
+
+    def slow_receive(*_):
+        time.sleep(.15)
+        return {'revision': 'stable-directory', 'written': True}
+
+    monkeypatch.setattr('studio.cloud_permissions.receive', slow_receive)
+    started = time.perf_counter()
+    c.cloud_message({'type': 'permissions', 'computerId': c.computer, 'proof': {}}, 'token')
+    assert time.perf_counter() - started < .05
+    tick = time.perf_counter()
+    await asyncio.sleep(.02)
+    assert time.perf_counter() - tick < .08
+    await asyncio.gather(*list(c.jobs))
+    diagnostic = c.cloud_send.await_args.args[0]
+    assert diagnostic['name'] == 'permission.applied'
+    assert diagnostic['revision'] == 'stable-directory' and diagnostic['durationMs'] >= 100

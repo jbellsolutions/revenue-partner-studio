@@ -185,6 +185,15 @@ test('a delayed heartbeat reply preserves its authenticated connector and pendin
   client.socket.send(JSON.stringify({ type: 'response', computerId: A, id: request.id, result: { computerId: A } }))
   assert.deepEqual(await result, { value: { computerId: A } })
 })
+test('permission renewal is independent from the two-second transport heartbeat', { timeout: 8000 }, async t => {
+  const f = await fixture(t)
+  const client = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token })
+  await until(() => client.messages.some(m => m.type === 'permissions'))
+  const initial = client.messages.filter(m => m.type === 'permissions').length
+  await new Promise(resolve => setTimeout(resolve, 4300))
+  assert.equal(client.socket.readyState, WebSocket.OPEN)
+  assert.equal(client.messages.filter(m => m.type === 'permissions').length, initial)
+})
 test('a returning connector waits for a silent owner heartbeat deadline without replaying work', { timeout: 12000 }, async t => {
   const f = await fixture(t)
   const first = await f.ws('/connect?computerId=' + A, { Authorization: 'Bearer ' + f.a.token }, { autoPong: false })

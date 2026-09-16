@@ -62,6 +62,9 @@ class Connector:
         self.peer_directory = []
         self.screens = {}
         self.agent_cache = {}
+        self.permission_lock = asyncio.Lock()
+        from .cloud_history import HistoryCatalog
+        self.history_catalog = HistoryCatalog(self)
         from .local_screen import LocalScreen
         self.local_screen=LocalScreen(self) if config.get('kind')=='local' and config.get('desktopHelper') else None
         self.capabilities = {'chat': False, 'teams': False, 'screens': False, 'imports': True}
@@ -386,7 +389,7 @@ class Connector:
                 capabilities = await self.rpc('studio.capabilities', {})
                 self.capabilities['teams'] = bool(capabilities.get('teams'))
                 self.capabilities['a2a'] = bool(capabilities.get('a2a'))
-                for capability in ('files','profiles','providerKeys','librarySkills','profileSettings','sessionRecovery'):
+                for capability in ('files','profiles','providerKeys','librarySkills','profileSettings','sessionRecovery','historySearch'):
                     self.capabilities[capability] = bool(capabilities.get(capability))
             except (RuntimeError, TimeoutError, ConnectionError):
                 self.capabilities['teams'] = False
@@ -403,7 +406,7 @@ class Connector:
                     'epoch': self.runtime_epoch, 'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
                     'state': 'ready' if connected else 'hermes_unavailable', 'message': error,
                     'runtimeVersion': capabilities.get('extensionVersion', 'legacy'),
-                    'connectorVersion': 'connector-recovery-1.2', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
+                    'connectorVersion': 'connector-recovery-1.3', 'setupJob': self.config.get('setupJob'), 'protocol': 1}
         if method=='import.preview':
             from .cloud_library import Library
             if p.get('bundle'):return await asyncio.to_thread(Library(self.home).preview,self.computer,p['bundle'])
@@ -430,6 +433,10 @@ class Connector:
                 return result
         if method == 'agents.list':
             return self.agents()
+        if method == 'sessions.search':
+            return await asyncio.to_thread(self.history_catalog.search, p)
+        if method == 'sessions.sources':
+            return await asyncio.to_thread(self.history_catalog.sources)
         if method == 'sessions.list':
             self.profile(agent)
             offset=max(0,int(p.get('offset',0)))
@@ -446,6 +453,17 @@ class Connector:
         if method == 'sessions.open':
             self.profile(agent)
             stored = p.get('sessionId')
+            reference = p.get('conversationRef')
+            if reference:
+                store, stored = await asyncio.to_thread(self.history_catalog.resolve, reference)
+                if store['profileId'] != agent:
+                    raise ValueError('Switch to the conversation’s owning agent before opening it')
+                if store['kind'] == 'legacy':
+                    if p.get('resumeMode', 'exact') != 'exact':
+                        raise ValueError('Choose Resume to recover this older-app conversation')
+                    stored = await asyncio.to_thread(self.history_catalog.materialize, store, stored, agent)
+                elif store['kind'] == 'imported':
+                    stored = 'imported-history:' + store['sourceBundle'] + ':' + store['checksum'] + ':' + stored
             existing = None
             if self.capabilities.get('sessionRecovery'):
                 existing = await self.rpc('studio.session', {'agentId': agent, 'sessionId': stored,
@@ -479,7 +497,7 @@ class Connector:
                 try: history = await asyncio.to_thread(self.history, agent, stored)
                 except ValueError:
                     if not existing or not existing.get('runtimeId'): raise
-            return {'runtimeId': runtime, 'sessionId': stored, 'info': result,
+            return {'runtimeId': runtime, 'sessionId': stored, 'profileId': agent, 'info': result,
                     'eventCursor': self.ledger.db.execute('SELECT coalesce(max(seq),0) FROM events').fetchone()[0],
                     **history}
         if method == 'sessions.history':
@@ -738,7 +756,7 @@ class Connector:
         method, params = message['method'], message.get('params', {})
         if not isinstance(request_id, str) or len(request_id) > 128:
             return
-        lock_key = 'open:' + json.dumps([params.get('agentId'), params.get('sessionId') or params.get('conversationId') or request_id]) if method == 'sessions.open' else request_id
+        lock_key = 'open:' + json.dumps([params.get('agentId'), params.get('conversationRef') or params.get('sessionId') or params.get('conversationId') or request_id],sort_keys=True) if method == 'sessions.open' else request_id
         lock = self.request_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             started = False
@@ -885,12 +903,21 @@ class Connector:
         elif message['type'] == 'peers':
             self.peers = message.get('computers', [])
         elif message['type'] == 'permissions':
-            from .cloud_permissions import receive
-            receive(self.home, self.computer, message['proof'], token)
+            self.spawn(self.apply_permissions(message['proof'], token))
         elif message['type'] == 'peer.response':
             f = self.peer_pending.get(message['id'])
             if f and not f.done():
                 f.set_exception(RuntimeError(message['error'])) if message.get('error') else f.set_result(message.get('result'))
+
+    async def apply_permissions(self, proof, token):
+        """Verify and persist grants away from the WebSocket reader loop."""
+        async with self.permission_lock:
+            from .cloud_permissions import receive
+            started = time.perf_counter()
+            result = await asyncio.to_thread(receive, self.home, self.computer, proof, token)
+            await self.cloud_send({'type': 'diagnostic', 'name': 'permission.applied',
+                'durationMs': round((time.perf_counter() - started) * 1000),
+                'revision': result.get('revision', ''), 'written': bool(result.get('written'))})
 
     async def run(self):
         self.spawn(self.hermes_loop())

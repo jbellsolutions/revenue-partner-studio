@@ -29,7 +29,7 @@ def prepare(native):
     if missing:raise RuntimeError('This Hermes version lacks required Studio operations: '+', '.join(sorted(missing)))
     protect_dispatch(server)
     import toolsets
-    toolsets.TOOLSETS['studio']={'description':'Persistent Studio teammates','tools':['studio_team'],'includes':[]}
+    toolsets.TOOLSETS['studio']={'description':'Persistent Studio teammates and conversation recall','tools':['studio_team','studio_history'],'includes':[]}
     original=server._gui_surface_toolsets
     server._gui_surface_toolsets=lambda platform:{'studio'} if platform=='studio' else original(platform)
     from .service import register

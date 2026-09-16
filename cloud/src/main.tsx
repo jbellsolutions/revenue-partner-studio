@@ -24,7 +24,9 @@ import {
   saveSpaces,
   type Space,
   type Conversation,
-  type Agent
+  type Agent,
+  type HistoryMatch,
+  type HistoryRef
 } from './state'
 import { Screen } from './screen'
 import { Delegations } from './delegations'
@@ -48,6 +50,8 @@ const title = (agent: Agent) =>
         .replace(/-[a-f0-9]{10}$/, '')
         .replace(/[-_]/g, ' ')
 const isTestAgent = (agent: Agent) => /(?:^|[-_ ])studio[-_ ]qa(?:[-_ ]|$)/i.test(agent.id + ' ' + agent.name)
+const sourceLabel = (source: string) => ({studio:'Studio',desktop:'Desktop',slack:'Slack',cli:'CLI',cron:'Automation','studio-import':'Recovered'} as Record<string,string>)[source] || source || 'Unknown'
+const historyDate = (value?: number | null) => value ? new Date(value).toLocaleString([], {dateStyle:'medium',timeStyle:'short'}) : 'Date unavailable'
 function App() {
   const [auth, setAuth] = useState<boolean | null>(null),
     [password, setPassword] = useState(''),
@@ -59,8 +63,12 @@ function App() {
     [modal, setModal] = useState(''),
     [notice, setNotice] = useState('')
   const [names, setNames] = useState<any[]>([]),
-    [historyOffset, setHistoryOffset] = useState<number | null>(null),
-    [archiveOffset, setArchiveOffset] = useState<number | null>(null),
+    [historyCursor, setHistoryCursor] = useState<string | null>(null),
+    [historyQuery, setHistoryQuery] = useState(''),
+    [historyProfile, setHistoryProfile] = useState('all'),
+    [historySource, setHistorySource] = useState('all'),
+    [historyPeriod, setHistoryPeriod] = useState('all'),
+    [historySources, setHistorySources] = useState<any>(null),
     [historyLoading, setHistoryLoading] = useState(false),
     [agentName, setAgentName] = useState(''),
     [role, setRole] = useState(''),
@@ -100,6 +108,10 @@ function App() {
     setFlow(null)
     setProviders(null)
     setNames([])
+    setHistoryCursor(null)
+    setHistorySources(null)
+    setHistoryProfile('all')
+    setHistorySource('all')
     setNotice('')
   }, [computer, space.agentId])
   const update = useCallback(
@@ -290,13 +302,16 @@ function App() {
   useEffect(() => {
     if (followBottom.current) bottom.current?.scrollIntoView({ behavior: 'instant' })
   }, [computer, space.agentId, conversation.messages.length, conversation.stream])
-  async function open(id: string, aid: string, sessionId?: string, force = false, recover = false) {
+  async function open(id: string, aid: string, sessionId?: string, force = false, recover = false, conversationRef?: HistoryRef) {
     const s = spacesRef.current[id] || blankSpace(),
       previous = currentConversation(s, aid)
     const cached = Object.entries(s.conversations).find(
       ([key, c]) => key.startsWith(aid + '/') && sessionId && c.sessionId === sessionId
     )
-    const key = cached?.[0] || ((recover || force) ? selectedKey(s, aid) : aid + '/' + (sessionId || crypto.randomUUID()))
+    const referenceKey = conversationRef
+      ? 'history-' + conversationRef.storeId + '-' + encodeURIComponent(conversationRef.sessionId).slice(0, 160)
+      : ''
+    const key = cached?.[0] || ((recover || force) ? selectedKey(s, aid) : aid + '/' + (referenceKey || sessionId || crypto.randomUUID()))
     const guard = id + ':' + key
     if (opening.current.has(guard)) return
     update(id, s => ({
@@ -317,6 +332,8 @@ function App() {
         agentId: aid,
         conversationId: key,
         sessionId,
+        conversationRef,
+        resumeMode: conversationRef ? 'exact' : undefined,
         model: previous.model,
         provider: previous.provider
       })
@@ -496,22 +513,34 @@ function App() {
       update(id, s => ({ ...s, tasks: result.deliveries || [], approvals: result.approvals || [] }))
     } catch {}
   }
-  async function history(offset = 0) {
+  async function history(cursor: string | null = null) {
     const context = selectionRef.current
-    if (!offset) setNames([])
+    if (!cursor) setNames([])
     setHistoryLoading(true)
     setModal('history')
     setNotice('')
     try {
-      const r = await rpc(computer, 'sessions.list', { agentId: space.agentId, offset })
+      const days = historyPeriod === '7' ? 7 : historyPeriod === '30' ? 30 : 0
+      const params = {
+        query: historyQuery,
+        ...(historyProfile === 'all' ? {} : { profiles: [historyProfile] }),
+        ...(historySource === 'all' ? {} : { sources: [historySource] }),
+        ...(days ? { after: Date.now() - days * 86400000 } : {}),
+        cursor,
+        limit: 30
+      }
+      const [r, sourceResult] = await Promise.all([
+        rpc(computer, 'sessions.search', params),
+        !cursor && !historySources ? rpc(computer, 'sessions.sources').catch(() => null) : Promise.resolve(null)
+      ])
       if (context === selectionRef.current) {
         setNames(current =>
-          offset
-            ? [...current, ...(r.sessions || []).filter((s: any) => !current.some(c => c.id === s.id))]
-            : r.sessions || []
+          cursor
+            ? [...current, ...(r.results || []).filter((s: any) => !current.some(c => c.storeId === s.storeId && c.sessionId === s.sessionId))]
+            : r.results || []
         )
-        setHistoryOffset(r.nextOffset ?? null)
-        if (!offset) setArchiveOffset(r.nextArchiveOffset ?? null)
+        setHistoryCursor(r.nextCursor ?? null)
+        if (sourceResult) setHistorySources(sourceResult)
       }
     } catch (e) {
       if (context === selectionRef.current) setNotice((e as Error).message)
@@ -519,20 +548,10 @@ function App() {
       if (context === selectionRef.current) setHistoryLoading(false)
     }
   }
-  async function archivedHistory() {
-    if (archiveOffset === null || historyLoading) return
-    const context = selectionRef.current
-    setHistoryLoading(true)
-    try {
-      const result = await rpc(computer, 'sessions.archives', { agentId: space.agentId, offset: archiveOffset })
-      if (selectionRef.current !== context) return
-      setNames(current => [...current, ...result.sessions.filter((s: any) => !current.some(c => c.id === s.id))])
-      setArchiveOffset(result.nextArchiveOffset)
-    } catch (e) {
-      if (selectionRef.current === context) setNotice((e as Error).message)
-    } finally {
-      if (selectionRef.current === context) setHistoryLoading(false)
-    }
+  function openHistoryResult(result: HistoryMatch) {
+    update(computer, current => ({ ...current, agentId: result.profileId }))
+    setModal('')
+    void open(computer, result.profileId, undefined, false, false, result.ref)
   }
   async function older() {
     if (!conversation.sessionId) return
@@ -855,7 +874,7 @@ function App() {
             <button disabled={!agent} onClick={() => setDetails(true)}>
               Agent details
             </button>
-            <button disabled={!agent} onClick={() => void history()}>
+            <button disabled={!agent || !space.capabilities.historySearch} onClick={() => void history()}>
               History
             </button>
             <button disabled={!agent || conversation.running} onClick={() => void open(computer, space.agentId)}>
@@ -942,6 +961,17 @@ function App() {
                 more={expandMessage}
               />
             ))}
+          {!!conversation.historyMatches.length && (
+            <section className="history-matches" aria-label="Conversation matches">
+              <strong>Conversations found on this computer</strong>
+              {conversation.historyMatches.map(match => (
+                <button key={match.ref.storeId + ':' + match.ref.sessionId} onClick={() => openHistoryResult(match)}>
+                  <span>{match.title || 'Untitled conversation'}</span>
+                  <small>{sourceLabel(match.source)} · {historyDate(match.lastActive)} · {match.preview}</small>
+                </button>
+              ))}
+            </section>
+          )}
           <Delegations key={computer + ':' + space.agentId} computer={computer} agent={space.agentId}
             tasks={space.tasks} peerRevision={space.peerRevision || 0} online={space.online} computers={computers}
             openAgent={(target, name, stored) => {
@@ -1313,31 +1343,56 @@ function App() {
             {modal === 'history' && (
               <>
                 <h2>Conversation history</h2>
-                <p>
-                  {agent && title(agent)} · {selected?.name}
-                </p>
+                <p>Search every Hermes profile on {selected?.name}. Transcripts stay on this computer.</p>
+                <form className="history-search" onSubmit={e => { e.preventDefault(); void history() }}>
+                  <label>
+                    Search conversations
+                    <input value={historyQuery} onChange={e => setHistoryQuery(e.target.value)} placeholder="Topic, phrase, or title" autoFocus />
+                  </label>
+                  <div className="history-filters">
+                    <label>Agent
+                      <select value={historyProfile} onChange={e => setHistoryProfile(e.target.value)}>
+                        <option value="all">All agents</option>
+                        {space.agents.map(item => <option key={item.id} value={item.id}>{title(item)}</option>)}
+                      </select>
+                    </label>
+                    <label>Source
+                      <select value={historySource} onChange={e => setHistorySource(e.target.value)}>
+                        <option value="all">All apps</option><option value="studio">Studio</option>
+                        <option value="desktop">Desktop</option><option value="slack">Slack</option>
+                        <option value="cli">CLI</option><option value="cron">Automation</option>
+                        <option value="studio-import">Recovered</option>
+                      </select>
+                    </label>
+                    <label>Date
+                      <select value={historyPeriod} onChange={e => setHistoryPeriod(e.target.value)}>
+                        <option value="all">Any time</option><option value="7">Past 7 days</option><option value="30">Past 30 days</option>
+                      </select>
+                    </label>
+                  </div>
+                  <button className="primary" disabled={historyLoading}>{historyLoading ? 'Searching…' : 'Search'}</button>
+                </form>
+                {historySources && <p className="small-note">
+                  {historySources.stores.length} history source{historySources.stores.length === 1 ? '' : 's'} checked
+                  {historySources.stores.some((item:any) => item.status === 'indexing') ? ' · Results may be incomplete while indexing.' : ''}
+                  {historySources.stores.some((item:any) => item.status === 'unavailable') ? ' · One older source needs repair.' : ''}
+                </p>}
                 <div className="history-list">
                   {names.map(s => (
                     <button
-                      key={s.id}
-                      onClick={() => {
-                        void open(computer, space.agentId, s.id)
-                        setModal('')
-                      }}
+                      key={s.storeId + ':' + s.sessionId}
+                      onClick={() => openHistoryResult(s)}
                     >
                       <strong>{s.title || 'Untitled conversation'}</strong>
-                      <small>{s.preview || s.id}</small>
+                      <small>{title(space.agents.find(item => item.id === s.profileId) || {name:s.profileName || s.profileId} as Agent)} · {sourceLabel(s.source)} · {historyDate(s.lastActive)}</small>
+                      <small>{s.preview || 'No preview available'}{s.resumeRequiresImport ? ' · Resume copies this conversation into its Hermes profile.' : ''}</small>
                     </button>
                   ))}
+                  {!names.length && !historyLoading && <p className="small-note">No matching conversations yet. Try fewer words or choose All apps.</p>}
                 </div>
-                {historyOffset !== null && (
-                  <button disabled={historyLoading} onClick={() => void history(historyOffset)}>
+                {historyCursor !== null && (
+                  <button disabled={historyLoading} onClick={() => void history(historyCursor)}>
                     {historyLoading ? 'Loading…' : 'Load older conversations'}
-                  </button>
-                )}
-                {archiveOffset !== null && (
-                  <button disabled={historyLoading} onClick={() => void archivedHistory()}>
-                    {historyLoading ? 'Loading…' : 'Load older imported updates'}
                   </button>
                 )}
               </>

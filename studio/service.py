@@ -511,7 +511,7 @@ def register(server):
         try: return server._ok(rid,dispatch(_service,params))
         except Exception as exc: return server._err(rid,4096,str(exc))
     server._methods['studio.a2a']=a2a
-    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'profileSettings':True,'sessionRecovery':True,'transportRecovery':True,'extensionVersion':'screens-recovery-2','limits':_service.settings()})
+    server._methods['studio.capabilities']=lambda rid,params:server._ok(rid,{'protocol':1,'teams':True,'a2a':True,'imports':True,'files':True,'profiles':True,'providerKeys':True,'librarySkills':True,'profileSettings':True,'sessionRecovery':True,'transportRecovery':True,'historySearch':True,'extensionVersion':'history-recovery-3','limits':_service.settings()})
     from .session_recovery import inspect_session, bind_session, recover_sessions
     original_create = server._methods['session.create']
     def create_session(rid, params):

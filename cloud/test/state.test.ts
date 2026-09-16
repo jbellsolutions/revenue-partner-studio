@@ -19,6 +19,19 @@ test('replayed event cannot duplicate assistant content', () => {
   assert.equal(reduceEvent(s, e).conversations['default/one'].messages.length, 1)
 })
 
+test('agent history results become structured cards only in the requesting conversation', () => {
+  const match = { profileId: 'default', title: 'Revenue notes', preview: 'pipeline', source: 'desktop',
+    ref: { computerId: 'computer-a', profileId: 'default', storeId: 'store-a', sessionId: 'saved-a' } }
+  const space = { ...blankSpace(), conversations: {
+    'default/one': { ...blankConversation(), runtimeId: 'one' },
+    'default/two': { ...blankConversation(), runtimeId: 'two' }
+  } }
+  const result = reduceEvent(space, { seq: 1, agentId: 'default', runtimeId: 'one',
+    kind: 'history.matches', payload: { matches: [match] } })
+  assert.deepEqual(result.conversations['default/one'].historyMatches, [match])
+  assert.deepEqual(result.conversations['default/two'].historyMatches, [])
+})
+
 test('runtime loss preserves draft/history selection and requires a new runtime attachment', () => {
   const s = {
     ...blankSpace(),

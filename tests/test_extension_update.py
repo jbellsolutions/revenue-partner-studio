@@ -13,7 +13,7 @@ def installation(tmp_path):
     module['update'].__globals__['launch_updates'] = lambda cfg, target: {}
     source=tmp_path/'release';target=tmp_path/'installed';home=tmp_path/'hermes'
     for root in (source,target):
-        for name in ['studio/cloud_connector.py','studio/service.py','distribution/local-launch.py']:
+        for name in ['studio/cloud_connector.py','studio/service.py','tools/studio_tools.py','distribution/local-launch.py']:
             path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('VERSION = '+repr(root.name))
     base=home/'studio-cloud';base.mkdir(parents=True)
     (base/'local-computer.json').write_text(json.dumps({'computerId':'mac'}))

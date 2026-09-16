@@ -10,6 +10,7 @@ from pathlib import Path
 class Ledger:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.path = path
         self.db = sqlite3.connect(path, isolation_level=None)
         path.chmod(0o600)
         self.db.row_factory = sqlite3.Row
@@ -20,6 +21,9 @@ class Ledger:
           CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,
             agent TEXT,session TEXT,kind TEXT NOT NULL,payload TEXT NOT NULL,created REAL NOT NULL);
           CREATE TABLE IF NOT EXISTS sessions(runtime TEXT PRIMARY KEY,agent TEXT NOT NULL,stored TEXT);
+          CREATE TABLE IF NOT EXISTS history_imports(store TEXT NOT NULL,source TEXT NOT NULL,
+            agent TEXT NOT NULL,destination TEXT NOT NULL,fingerprint TEXT NOT NULL,created REAL NOT NULL,
+            PRIMARY KEY(store,source,agent));
         """)
         self.db.execute("UPDATE requests SET state='needs_review',error='Connector restarted during dispatch; inspect saved history before retrying.' WHERE state='dispatching'")
 

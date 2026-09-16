@@ -89,7 +89,8 @@ export class ControlStore {
   }
   permissions(computer:string) {
     const grants=(this.grants() as any[]).filter(g=>g.target===computer&&!g.revoked&&(!g.expires||g.expires>Date.now()))
-    return this.sign(computer,{computerId:computer,validUntil:Date.now()+15000,grants})
+    const revision=hash(JSON.stringify(grants.map(g=>[g.id,g.source,g.actor,g.target,g.agent,g.expires||null])))
+    return this.sign(computer,{computerId:computer,validUntil:Date.now()+60000,revision,grants})
   }
   jobs() {return this.store.db.prepare('SELECT id,computer AS computerId,state,detail,updated FROM connection_jobs ORDER BY updated DESC LIMIT 30').all()}
   job(id:string) {

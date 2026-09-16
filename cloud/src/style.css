@@ -793,6 +793,17 @@ label textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.history-search { display: grid; gap: 12px; margin: 16px 0; }
+.history-search > label { display: grid; gap: 6px; font-weight: 600; }
+.history-filters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.history-filters label { display: grid; gap: 5px; font-size: 12px; color: var(--studio-muted); }
+.history-filters select { width: 100%; }
+.history-matches { margin: 12px 24px; padding: 14px; border: 1px solid var(--studio-line); border-radius: 16px; background: var(--studio-panel); display: grid; gap: 8px; }
+.history-matches > strong { font-size: 13px; }
+.history-matches button { text-align: left; display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; }
+.history-matches button span { font-weight: 650; }
+.history-matches button small { color: var(--studio-muted); line-height: 1.35; }
+@media (max-width: 700px) { .history-filters { grid-template-columns: 1fr; } }
 .computer-row {
   display: flex;
   align-items: center;

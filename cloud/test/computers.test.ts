@@ -51,6 +51,17 @@ test('trusted connections are explicit, directional, agent-specific, durable, an
   assert.throws(()=>control.grant({source:A,actor:'*',target:B,agent:'email'}))
 })
 
+test('permission leases keep a stable revision and enough renewal time',t=>{
+  const {store,control}=fixture(t);store.addComputer(A,'A');store.addComputer(B,'B')
+  control.grant({source:A,actor:'default',target:B,agent:'email'})
+  const decode=(proof:any)=>JSON.parse(Buffer.from(proof.payload,'base64url').toString())
+  const first=decode(control.permissions(B)),second=decode(control.permissions(B))
+  assert.equal(first.revision,second.revision)
+  assert.ok(first.validUntil-Date.now()>55000)
+  control.grant({source:A,actor:'other',target:B,agent:'email'})
+  assert.notEqual(decode(control.permissions(B)).revision,first.revision)
+})
+
 test('permanent setup authorization failures need action; temporary failures keep resumable progress',async t=>{
   const {store,control}=fixture(t);store.addComputer(A,'Revenue Partner');control.set('orgo.key','test-key')
   let status=403

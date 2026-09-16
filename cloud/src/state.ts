@@ -1,6 +1,18 @@
 import type { ModelSelection } from './model-catalog'
 import type { Attachment } from './attachments'
 export type Message = { id: string | number; role: string; content: string; truncated?: boolean }
+export type HistoryRef = { computerId: string; profileId: string; storeId: string; sessionId: string }
+export type HistoryMatch = {
+  ref: HistoryRef
+  profileId: string
+  profileName?: string
+  title: string
+  preview: string
+  source: string
+  lastActive?: number | null
+  storeKind?: string
+  resumeRequiresImport?: boolean
+}
 export type Agent = { id: string; name: string; description: string; model: string; provider: string; head: boolean }
 export type Conversation = {
   modelSelection?: ModelSelection
@@ -19,6 +31,7 @@ export type Conversation = {
   model: string
   provider: string
   stream: string
+  historyMatches: HistoryMatch[]
 }
 export type Space = {
   agents: Agent[]
@@ -52,7 +65,8 @@ export function blankConversation(): Conversation {
     hasMore: false,
     model: '',
     provider: '',
-    stream: ''
+    stream: '',
+    historyMatches: []
   }
 }
 export function blankSpace(): Space {
@@ -131,6 +145,8 @@ export function reduceEvent(space: Space, event: any): Space {
   if (event.seq <= c.afterSeq) return next
   let updated = { ...c }
   const p = event.payload || {}
+  if (event.kind === 'history.matches')
+    updated = { ...updated, historyMatches: Array.isArray(p.matches) ? p.matches.slice(0, 10) : [] }
   if (event.kind === 'session.reclaimed')
     return { ...next, conversations: { ...space.conversations, [key]: { ...c, runtimeId: '', loading: false } } }
   if (event.kind === 'message.delta') updated = { ...updated, running: true, stream: updated.stream + (p.text || '') }
@@ -182,7 +198,8 @@ export function restoreSpaces(): Record<string, Space> {
           sessionId: typeof c.sessionId === 'string' ? c.sessionId : null,
           draft: String(c.draft || '').slice(0, 100000),
           model: String(c.model || ''),
-          provider: String(c.provider || '')
+          provider: String(c.provider || ''),
+          historyMatches: Array.isArray(c.historyMatches) ? c.historyMatches.slice(0, 10) : []
         }
       }
       result[id] = { ...blankSpace(), agentId: v.agentId, selected: v.selected || {}, conversations }
@@ -208,7 +225,8 @@ export function saveSpaces(spaces: Record<string, Space>) {
               model: c.model,
               provider: c.provider,
               attachments: c.attachments,
-              pendingSend: c.pendingSend
+              pendingSend: c.pendingSend,
+              historyMatches: c.historyMatches
             }
           ])
         )

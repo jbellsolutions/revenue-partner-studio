@@ -13,6 +13,25 @@ def studio_team(args, **kwargs):
         return json.dumps({'error':str(exc)})
 
 
+def studio_history(args, **kwargs):
+    """Read-only recall for the running profile; profile scope is not caller-controlled."""
+    try:
+        from studio.service import current
+        from studio.cloud_history import search_profile
+        from studio.machine import computer_id
+        service=current();profile=service.actor()
+        result=search_profile(service.home,computer_id(),profile,str(args.get('query') or ''),args.get('limit',5))
+        runtime=kwargs.get('current_session_id')
+        if runtime not in service.server._sessions:
+            runtime=next((rid for rid,value in service.server._sessions.items()
+                if value.get('session_key')==runtime),'')
+        if runtime:
+            service.server._emit('history.matches',runtime,{'matches':result['results'],'query':str(args.get('query') or '')})
+        return json.dumps(result,ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({'error':str(exc)})
+
+
 registry.register(name='studio_team',toolset='studio',handler=studio_team,
     check_fn=lambda:os.getenv('HERMES_STUDIO_RUNTIME')=='1',
     description='Create persistent teammates and groups; deliver messages to real Hermes sessions and inspect results.',
@@ -24,3 +43,11 @@ registry.register(name='studio_team',toolset='studio',handler=studio_team,
         'members':{'type':'array','items':{'type':'string'}},'recipient':{'type':'string'},
         'message':{'type':'string'},'group_id':{'type':'string'},'request_id':{'type':'string'}},
         'required':['operation']}})
+
+registry.register(name='studio_history',toolset='studio',handler=studio_history,
+    check_fn=lambda:os.getenv('HERMES_STUDIO_RUNTIME')=='1',
+    description='Search this agent’s own Hermes conversations and return verified Studio links without calling a model.',
+    schema={'name':'studio_history','description':'Search only your own saved conversations by topic. Results are verified records and appear as openable cards in Studio. Use an empty query to browse recent work.',
+      'parameters':{'type':'object','properties':{
+        'query':{'type':'string','description':'Topic, phrase, or title to find in this agent’s saved conversations.'},
+        'limit':{'type':'integer','minimum':1,'maximum':10,'default':5}},'required':[]}})
