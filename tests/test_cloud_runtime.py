@@ -3,8 +3,9 @@ from studio.cloud_runtime import mcp_servers,tool_selection
 
 def test_legacy_profile_keeps_credentials_and_other_integrations_but_uses_owned_screen(monkeypatch,tmp_path):
     import hermes_constants
-    from studio import service
+    from studio import service,cloud_runtime
     monkeypatch.setenv('HERMES_STUDIO_RUNTIME','1')
+    monkeypatch.setattr(cloud_runtime.sys,'platform','darwin')
     monkeypatch.setattr(hermes_constants,'get_hermes_home',lambda:tmp_path/'profiles'/'email')
     monkeypatch.setattr(service,'screen_config',lambda profile:{'profile':profile,'computer':'verified'})
     original={'orgo-agent':{'command':'old-computer-route'},'crm':{'token':'existing-private-credential'}}
