@@ -235,10 +235,41 @@ def _record_candidates(info: dict, name: str):
         yield legacy
 
 
+def _verified_chrome_group(info: dict, value: dict, proc_root=Path('/proc')) -> dict | None:
+    """Verify Chrome when its launcher remains the process-group owner.
+
+    Some Chrome builds hand the debugging socket to a child and leave the
+    recorded group leader with an empty command line. The immutable Linux start
+    time still identifies our launcher; the socket owner must be a Chrome
+    executable in that exact process group and on the assigned display.
+    """
+    try:
+        leader = int(value['pid'])
+        start = value['start']
+        if process_start(leader) != start or not listening(info['cdpPort']):
+            return None
+        owners = port_owners(info['cdpPort'])
+        if len(owners) != 1:
+            return None
+        owner = next(iter(owners))
+        if os.getpgid(owner) != leader:
+            return None
+        executable = Path(os.readlink(proc_root / str(owner) / 'exe')).name
+        if executable not in {'chrome', 'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'}:
+            return None
+        environment = (proc_root / str(owner) / 'environ').read_bytes().split(b'\0')
+        if ('DISPLAY=' + info['display']).encode() not in environment:
+            return None
+        return {'pid': leader, 'start': start}
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+
+
 def _verified_record(info: dict, name: str, *, promote: bool = True) -> dict | None:
     for record in _record_candidates(info, name):
         if not record.exists():
             continue
+        value = {}
         try:
             value = json.loads(record.read_text())
             if value.get('start') and process_start(value.get('pid', 0)) == value['start']:
@@ -252,6 +283,9 @@ def _verified_record(info: dict, name: str, *, promote: bool = True) -> dict | N
             # leaving a stale or briefly empty /proc command. Treat the saved
             # record as unverified. Callers still refuse to reuse a listening
             # port, while a closed port can be safely reassigned.
+            identity = _verified_chrome_group(info, value) if name == 'chrome' and isinstance(value, dict) else None
+            if identity:
+                return identity
             continue
     return None
 
@@ -348,7 +382,10 @@ def ensure(profile: str, *, browser: bool = False, owner: str | None = None) -> 
     try:
         _ensure_slot(info)
         if browser:
-            if listening(info['cdpPort']) and not _verified_record(info, 'chrome'):
+            # The primary :99 desktop belongs to the Orgo image and predates
+            # this manager. Specialist browsers always require our exact
+            # profile-scoped process identity.
+            if profile != 'default' and listening(info['cdpPort']) and not _verified_record(info, 'chrome'):
                 raise RuntimeError('This screen browser has an unverified owner; it was preserved. Recover its assignment before continuing.')
             if not listening(info["cdpPort"]):
                 spawn(info, "chrome", ["/usr/bin/google-chrome", "--no-sandbox", "--disable-dev-shm-usage",
@@ -442,6 +479,10 @@ def reconcile(profile: str) -> dict:
         with locked(Path(info['slotDirectory'])/'start.lock'), locked(directory/'action.lock'):
             identities = {}
             for service, key in [('display','vncPort'),('viewer','wsPort'),('chrome','cdpPort')]:
+                saved = _verified_record(info, service, promote=False)
+                if saved:
+                    identities[service] = saved
+                    continue
                 owners = port_owners(info[key])
                 if listening(info[key]) and not owners: raise RuntimeError('A live screen port owner could not be inspected; nothing was changed')
                 if len(owners) > 1: raise RuntimeError('A screen port has multiple owners; nothing was changed')

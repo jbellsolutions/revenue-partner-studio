@@ -182,6 +182,21 @@ def test_repair_requires_browser_directory_display_port_and_own_process_group(re
     with pytest.raises(RuntimeError,match='ownership'):screens.managed_identity(info,'chrome',42,proc)
 
 
+def test_chrome_child_socket_is_bound_to_its_saved_launcher_group(registry, monkeypatch):
+    info = screens.screen('brent')
+    proc = registry/'proc'; owner = proc/'42'; owner.mkdir(parents=True)
+    (owner/'exe').symlink_to('/opt/google/chrome/chrome')
+    (owner/'environ').write_bytes(('DISPLAY='+info['display']+'\0').encode())
+    value = {'pid': 40, 'start': 'verified'}
+    monkeypatch.setattr(screens, 'process_start', lambda pid: 'verified')
+    monkeypatch.setattr(screens, 'listening', lambda port: port == info['cdpPort'])
+    monkeypatch.setattr(screens, 'port_owners', lambda port: {42})
+    monkeypatch.setattr(screens.os, 'getpgid', lambda pid: 40)
+    assert screens._verified_chrome_group(info, value, proc) == value
+    monkeypatch.setattr(screens.os, 'getpgid', lambda pid: 99)
+    assert screens._verified_chrome_group(info, value, proc) is None
+
+
 def test_assignment_identity_changes_even_when_same_profile_reuses_same_slot(registry):
     first = screens.screen('researcher')
     assert screens.release('researcher')
