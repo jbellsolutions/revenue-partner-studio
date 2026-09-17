@@ -16,8 +16,20 @@ Focused final coverage passed 147 affected runtime tests, 67 cloud tests, 11 set
 | Existing Orgo fleet promotion | **Passed.** Four computers used guarded one-at-a-time updates with readiness and specialist-screen checks. |
 | Independent recipient installation | **Pending.** Must use independently authorized Railway, Orgo and provider accounts and pass real chat/tool/screen/reopen checks. |
 | Visual takeover and cross-screen input acceptance | **Pending under the existing browser-policy restriction.** No bypass was used. |
-| Performance p95 and clean 24-hour qualification | **Pending on this final revision.** Prior windows remain historical evidence. |
+| Performance p95 and clean 24-hour qualification | **Backend window completed, but the clean-reliability gate failed.** All controlled jobs verified and successful backend calls were fast; recurring transport interruptions and one interrupted screen-status check remain recorded below. |
 | Client-ready claim | **Private-client pilot only** until the remaining gates pass. |
+
+## Beta.4 24-hour qualification — completed, not clean
+
+The named `v0.2.0-beta.4-3ccaf28-qualified-1` window ran on the immutable beta.4 release revision from September 16 at 20:21:17.729 UTC through September 17 at 20:21:17.729 UTC. The configured revision matched throughout, the window reached its original deadline without a reset, and all earlier windows and negative evidence remain preserved.
+
+All 32 controlled read-only file-tool jobs reached the verified state. Final reconciliation found 32 distinct completed remote deliveries, no duplicate delivery identity and no evidence-read error. Thirty jobs recorded one tool start and one tool result. Two jobs recorded three starts and three results; the retained summary proves that each accepted task identity reconciled once, but it does not treat multiple read-only tool calls inside one task as proof of a single action. These qualification jobs could not create an external side effect.
+
+The reliability result is not a pass. Status probes succeeded 11,453 of 11,516 times; the 63 failures comprised 55 interrupted connections and eight offline observations. Each failed target cycle also produced a corresponding qualification failure record. One screen-status request was interrupted and generated its paired screen-health failure; the other 28,621 screen-status requests succeeded. Structured gateway diagnostics for the bounded window recorded 294 admitted connections closed by heartbeat timeout, 17 rejected ownership-conflict reconnects, 47 slow-pong observations and four event-loop-lag observations with a maximum of 546 ms. Close counts are transport events across computers and reconnect attempts, not a count of unique outages.
+
+Successful backend p95 measurements were 192 ms for remote task acknowledgment, 179 ms for session open, 97 ms for agent listing, 89 ms for connection status, 172 ms for task listing, 87 ms for task evidence and 272 ms for read-only screen status. The acknowledgment target passed for these controlled jobs. These measurements do not establish Studio startup, cached browser switching, first visible frame, reconnect-after-network-return, browser closure, pixel/input isolation or takeover performance.
+
+Read-only screen ownership observations contained 11,444 ready samples and 17,177 unassigned samples, with no paused sample. The monitor did not allocate or operate a screen. The result keeps beta.4 in private-client-pilot status and blocks an unconditional client-ready claim. A later qualification should begin only after a reviewed transport repair is deployed; this failed window must remain intact.
 
 ## v0.2.0-beta.3 private-client pilot
 
@@ -48,7 +60,7 @@ Private browser workspace; existing Orgo Linux computers, starting with 8 GB; na
 | Public release source, branding and installer | Previous beta.1 [hosted verification](https://github.com/jbellsolutions/revenue-partner-studio/actions/runs/34809435709) passed. Round two local checks are recorded below; match the prerelease commit to its [hosted verification run](https://github.com/jbellsolutions/revenue-partner-studio/actions/workflows/studio-ci.yml). |
 | Independent recipient installation | **Not yet verified.** Requires its own authorized accounts/resources, provider authentication, real chat/tools and screen/reopen checks. A preflight or mocked adapter does not satisfy this gate. |
 | Browser visual acceptance | **Unverified while administrator-policy verification is unavailable.** This affects live appearance, mobile interaction, keyboard navigation and visible takeover acceptance. No bypass is permitted. |
-| 24-hour backend reliability trial | The original trial runs from September 14, 03:45:36 UTC to September 15, 03:45:36 UTC on its original runtime revision. At 9.47 elapsed hours on September 14, all five computers were online. The checkpoint had 12 verified tool jobs, 3,397 successful status samples and 11 failed status samples. Agent/task listings succeeded 3,397 times each. Failures recovered; their cause remains unresolved. The trial has not been reset or declared passed. Interface deployment does not qualify the new computer extension. |
+| 24-hour backend reliability trial | **Latest beta.4 window completed but did not pass cleanly.** All 32 controlled jobs verified, while recurring heartbeat closures produced 63 failed status probes and one interrupted screen-status check. The preserved original September 14–15 window and other earlier windows remain historical evidence. |
 | Public anonymous access, DNS and HTTPS | **Verified September 14, 2026.** The website and private app are live on their separate product domains through the existing Railway service, with DNS retained at Hostinger. All three domain certificates are valid. Anonymous pages/downloads, canonical redirect, private login and computer event streams passed. Cloudflare Pages is retained as an alternate deployment. See the final domain checkpoint below. |
 
 ## Performance and reliability targets
