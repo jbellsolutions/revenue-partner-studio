@@ -316,6 +316,8 @@ class RemoteMaintenanceContractTests(unittest.TestCase):
         self.assertIn("supervisorctl restart", script)
         for server in ("orgo-agent", "orgo", "super-browser"):
             self.assertIn(f"hermes mcp test {server}", script)
+        self.assertIn("for server in browser-box data-box; do", script)
+        self.assertIn('hermes mcp test "$server"', script)
         self.assertNotIn("printenv", script)
         self.assertIn("Environment=HERMES_HOME=/root/.hermes", service)
         self.assertIn("ExecStart=/usr/local/sbin/orgo-remote-maintenance", service)

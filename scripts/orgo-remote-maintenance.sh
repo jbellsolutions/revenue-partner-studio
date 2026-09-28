@@ -91,6 +91,13 @@ verify_services() {
   hermes gateway status
   hermes mcp test orgo-agent
   hermes mcp test orgo
+  local server
+  for server in browser-box data-box; do
+    # Optional successors to Super Browser: tested only where they are configured.
+    if grep -q "^  ${server}:" "${HERMES_HOME:-$HOME/.hermes}/config.yaml" 2>/dev/null; then
+      hermes mcp test "$server"
+    fi
+  done
   hermes mcp test super-browser
 }
 
