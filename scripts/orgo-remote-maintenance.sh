@@ -87,10 +87,27 @@ stop_gateway() {
   fi
 }
 
+mcp_server_enabled() {
+  # True when config.yaml defines `  <name>:` under mcp_servers without `enabled: false`.
+  awk -v name="$1" '
+    $0 == "  " name ":" { inblock = 1; found = 1; next }
+    inblock && /^  [^ ]/ { inblock = 0 }
+    inblock && /^    enabled:[[:space:]]*false/ { disabled = 1 }
+    END { exit !(found && !disabled) }
+  ' "${HERMES_HOME:-$HOME/.hermes}/config.yaml" 2>/dev/null
+}
+
 verify_services() {
   hermes gateway status
   hermes mcp test orgo-agent
   hermes mcp test orgo
+  local server
+  for server in browser-box data-box; do
+    # Optional successors to Super Browser: tested only where configured and enabled.
+    if mcp_server_enabled "$server"; then
+      hermes mcp test "$server"
+    fi
+  done
   hermes mcp test super-browser
 }
 
